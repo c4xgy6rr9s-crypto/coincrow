@@ -21,6 +21,7 @@ const DEFAULT_STATE = () => ({
     monthStartDay: 1,
     baseCurrency: 'GBP',
     lastFxRate: null, // { rate, fetchedAtISO }
+    rollover: false,  // carry each category's leftover/overspend into the next month
   },
 });
 
@@ -111,6 +112,33 @@ function periodElapsedFraction(period) {
   if (now >= period.end) return 1;
   if (now < period.start) return 0;
   return clamp(dayDiff(period.start, now) / period.days, 0, 1);
+}
+
+// start of the budget period containing the earliest transaction (null if none)
+function earliestPeriodStart() {
+  if (!state.transactions.length) return null;
+  const min = state.transactions.reduce((m, t) => (t.dateISO < m ? t.dateISO : m), state.transactions[0].dateISO);
+  return periodForDate(parseISO(min)).start;
+}
+
+// cumulative leftover (budget − spent) for a category across every completed period
+// from the first month of activity up to (not including) the displayed period.
+// Positive = saved/rolls forward; negative = overspend carried as debt.
+function carryInFor(catName, periodStart, baseBudget) {
+  if (!state.settings.rollover || baseBudget <= 0) return 0;
+  const start = earliestPeriodStart();
+  if (!start) return 0;
+  let carry = 0, guard = 0;
+  let cur = new Date(start);
+  while (cur < periodStart && guard++ < 120) {
+    const p = periodForDate(cur);
+    const spent = txnsInPeriod(p)
+      .filter((t) => t.category === catName)
+      .reduce((s, t) => s + t.gbpAmount, 0);
+    carry += baseBudget - spent;
+    cur = new Date(cur.getFullYear(), cur.getMonth() + 1, cur.getDate());
+  }
+  return round2(carry);
 }
 
 /* ---------- FX ---------- */
@@ -325,17 +353,19 @@ function renderDashboard() {
   let totSpent = 0, totBudget = 0, totExpected = 0;
   const rows = state.categories.map((c) => {
     const spent = round2(spentByCat[c.name] || 0);
-    const budget = c.monthlyBudgetGbp || 0;
+    const base = c.monthlyBudgetGbp || 0;
+    const carry = carryInFor(c.name, period.start, base);
+    const budget = round2(base + carry); // effective budget incl. rollover
     const expected = round2(budget * frac);
     totSpent += spent; totBudget += budget; totExpected += expected;
-    return { name: c.name, spent, budget, expected };
+    return { name: c.name, spent, budget, expected, carry };
   });
   // categories with spend but no budget config
   Object.keys(spentByCat).forEach((name) => {
     if (!rows.some((r) => r.name === name)) {
       const spent = round2(spentByCat[name]);
       totSpent += spent;
-      rows.push({ name, spent, budget: 0, expected: 0 });
+      rows.push({ name, spent, budget: 0, expected: 0, carry: 0 });
     }
   });
 
@@ -383,7 +413,7 @@ function catCard(r, frac, txns) {
     <div class="cat-foot">
       <span class="badge badge-${pace.level}">${pace.label}</span>
       ${noBudget ? '<span class="muted small">no budget set</span>'
-        : `<span class="muted small">${gbp(round2(r.budget - r.spent))} left</span>`}
+        : `<span class="muted small">${gbp(round2(r.budget - r.spent))} left${r.carry ? ` · incl. ${r.carry > 0 ? '+' : ''}${gbp(r.carry)} rolled over` : ''}</span>`}
     </div>
     <ul class="txn-list cat-txns" hidden></ul>`;
   if (count) {
@@ -487,6 +517,7 @@ function renderSettings() {
   renderCategoryEdit();
   renderAccountEdit();
   $('#monthStartDay').value = state.settings.monthStartDay;
+  $('#rolloverInput').checked = !!state.settings.rollover;
   const r = state.settings.lastFxRate;
   $('#fxRateInput').value = r ? r.rate : '';
   $('#fxRateMeta').textContent = r
@@ -564,6 +595,11 @@ $('#addAccountBtn').addEventListener('click', () => {
 $('#monthStartDay').addEventListener('change', (e) => {
   state.settings.monthStartDay = clamp(parseInt(e.target.value, 10) || 1, 1, 28);
   e.target.value = state.settings.monthStartDay;
+  saveState();
+});
+
+$('#rolloverInput').addEventListener('change', (e) => {
+  state.settings.rollover = e.target.checked;
   saveState();
 });
 

@@ -104,6 +104,7 @@ input:focus, select:focus { outline: none; border-color: var(--gold); box-shadow
 
 .check { display: flex; align-items: center; gap: 8px; padding-bottom: 12px; white-space: nowrap; }
 .check input { width: auto; }
+.toggle-row { white-space: normal; padding: 4px 0 6px; font-weight: 600; }
 
 /* ---------- add: amount + currency ---------- */
 .amount-row { display: flex; gap: 10px; }
@@ -193,6 +194,7 @@ input:focus, select:focus { outline: none; border-color: var(--gold); box-shadow
 /* edit modal */
 .modal-overlay { position: fixed; inset: 0; z-index: 50; background: rgba(0,0,0,0.6);
   display: flex; align-items: flex-end; justify-content: center; padding: 0; backdrop-filter: blur(2px); }
+.modal-overlay[hidden] { display: none; }
 .modal { width: 100%; max-width: 560px; max-height: 92vh; overflow-y: auto;
   border-radius: 18px 18px 0 0; margin: 0; animation: sheet-up 0.18s ease; }
 @keyframes sheet-up { from { transform: translateY(30px); opacity: 0.6; } to { transform: none; opacity: 1; } }
