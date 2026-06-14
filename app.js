@@ -703,10 +703,9 @@ function bucketEntries(kind) {
       [...years].forEach((y) => {
         const effDate = md ? y + md : '';
         let cls;
-        if (y === nextOcc) cls = 'current';            // the upcoming occurrence
-        else if (effDate && effDate < today) cls = 'past';
-        else if (y > curYear) cls = 'future';
-        else cls = 'current';
+        if (effDate && effDate < today) cls = 'past';
+        else if (y > curYear) cls = 'future';          // future-year occurrence -> collapsed
+        else cls = 'current';                          // this year's upcoming occurrence
         entries.push({ b, year: y, spent: bucketSpentInYear(b.id, y), budget: b.budgetGbp || 0, cls });
       });
     } else {
