@@ -85,6 +85,7 @@ main { position: relative; z-index: 1; max-width: 720px; margin: 0 auto; padding
 
 /* ---------- fields ---------- */
 .field { display: flex; flex-direction: column; gap: 6px; margin-bottom: 13px; }
+.field[hidden] { display: none; }
 .field-label { font-size: 13px; color: var(--muted); font-weight: 600; }
 .field-row { display: flex; gap: 12px; align-items: flex-end; }
 .grow { flex: 1; }
