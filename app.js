@@ -722,6 +722,8 @@ function bucketDateLabel(b, kind) {
   return `${b.startISO ? fmt(b.startISO) : '—'} → ${b.endISO ? fmt(b.endISO) : '—'}`;
 }
 
+const showPast = { trip: false, gift: false };
+
 function renderBuckets(kind) {
   const cfg = BUCKET_KINDS[kind];
   const wrap = $(BUCKET_FORM[kind].cards);
@@ -733,12 +735,13 @@ function renderBuckets(kind) {
   // group per-year entries (a recurring bucket appears in multiple years)
   const groups = {};
   bucketEntries(kind).forEach((e) => { (groups[e.year] = groups[e.year] || []).push(e); });
-  const years = Object.keys(groups).sort((a, b) => {
-    if (a === 'Undated') return 1;
-    if (b === 'Undated') return -1;
-    return a.localeCompare(b);
-  });
-  years.forEach((yr) => {
+  const curYear = todayISO().slice(0, 4);
+  const dated = Object.keys(groups).filter((y) => y !== 'Undated');
+  const currentFuture = dated.filter((y) => y >= curYear).sort((a, b) => b.localeCompare(a)); // newest first
+  const past = dated.filter((y) => y < curYear).sort((a, b) => b.localeCompare(a));
+  const undated = groups.Undated ? ['Undated'] : [];
+
+  const renderYear = (yr) => {
     const items = groups[yr].sort((a, b) => (a.b.startISO || '').localeCompare(b.b.startISO || '') || a.b.name.localeCompare(b.b.name));
     const budgetSum = round2(items.reduce((s, e) => s + e.budget, 0));
     const spentSum = round2(items.reduce((s, e) => s + e.spent, 0));
@@ -747,7 +750,19 @@ function renderBuckets(kind) {
     hdr.innerHTML = `<span>${yr}</span><span class="muted small">${gbp(budgetSum)} budgeted · ${gbp(spentSum)} spent</span>`;
     wrap.appendChild(hdr);
     items.forEach((e) => wrap.appendChild(bucketCard(e, kind)));
-  });
+  };
+
+  currentFuture.forEach(renderYear);
+  undated.forEach(renderYear);
+  if (past.length) {
+    const btn = document.createElement('button');
+    btn.className = 'btn ghost show-past-btn';
+    btn.type = 'button';
+    btn.textContent = showPast[kind] ? 'Hide past years' : `Show past years (${past.length})`;
+    btn.addEventListener('click', () => { showPast[kind] = !showPast[kind]; renderBuckets(kind); });
+    wrap.appendChild(btn);
+    if (showPast[kind]) past.forEach(renderYear);
+  }
 }
 function categoryForKind(kind) {
   const c = state.categories.find((x) => x.bucketKind === kind);
