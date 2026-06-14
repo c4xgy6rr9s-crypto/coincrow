@@ -273,7 +273,7 @@ input[type=color] { -webkit-appearance: auto; appearance: auto; width: 42px; hei
 .year-head { display: flex; align-items: baseline; justify-content: space-between;
   gap: 10px; margin: 6px 2px 2px; padding-top: 4px; }
 .year-head > span:first-child { font-weight: 800; font-size: 16px; color: var(--gold); }
-.show-past-btn { width: 100%; margin-top: 4px; }
+.show-year-btn { width: 100%; margin-top: 4px; }
 
 /* trips */
 .trip-status { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.4px;

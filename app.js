@@ -723,6 +723,7 @@ function bucketDateLabel(b, kind) {
 }
 
 const showPast = { trip: false, gift: false };
+const showFuture = { trip: false, gift: false };
 
 function renderBuckets(kind) {
   const cfg = BUCKET_KINDS[kind];
@@ -737,7 +738,8 @@ function renderBuckets(kind) {
   bucketEntries(kind).forEach((e) => { (groups[e.year] = groups[e.year] || []).push(e); });
   const curYear = todayISO().slice(0, 4);
   const dated = Object.keys(groups).filter((y) => y !== 'Undated');
-  const currentFuture = dated.filter((y) => y >= curYear).sort((a, b) => b.localeCompare(a)); // newest first
+  const future = dated.filter((y) => y > curYear).sort((a, b) => b.localeCompare(a)); // newest first
+  const current = dated.filter((y) => y === curYear);
   const past = dated.filter((y) => y < curYear).sort((a, b) => b.localeCompare(a));
   const undated = groups.Undated ? ['Undated'] : [];
 
@@ -751,16 +753,27 @@ function renderBuckets(kind) {
     wrap.appendChild(hdr);
     items.forEach((e) => wrap.appendChild(bucketCard(e, kind)));
   };
-
-  currentFuture.forEach(renderYear);
-  undated.forEach(renderYear);
-  if (past.length) {
+  const toggleBtn = (cls, on, label, count, onclick) => {
     const btn = document.createElement('button');
-    btn.className = 'btn ghost show-past-btn';
+    btn.className = `btn ghost ${cls}`;
     btn.type = 'button';
-    btn.textContent = showPast[kind] ? 'Hide past years' : `Show past years (${past.length})`;
-    btn.addEventListener('click', () => { showPast[kind] = !showPast[kind]; renderBuckets(kind); });
+    btn.textContent = on ? `Hide ${label}` : `Show ${label} (${count})`;
+    btn.addEventListener('click', onclick);
     wrap.appendChild(btn);
+  };
+
+  // future (newest first) — collapsed by default, sits above the current year
+  if (future.length) {
+    toggleBtn('show-year-btn', showFuture[kind], 'future years', future.length,
+      () => { showFuture[kind] = !showFuture[kind]; renderBuckets(kind); });
+    if (showFuture[kind]) future.forEach(renderYear);
+  }
+  current.forEach(renderYear);
+  undated.forEach(renderYear);
+  // past (newest first) — collapsed by default, sits at the bottom
+  if (past.length) {
+    toggleBtn('show-year-btn', showPast[kind], 'past years', past.length,
+      () => { showPast[kind] = !showPast[kind]; renderBuckets(kind); });
     if (showPast[kind]) past.forEach(renderYear);
   }
 }

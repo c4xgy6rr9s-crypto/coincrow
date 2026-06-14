@@ -138,8 +138,6 @@
     <!-- TRIPS -->
     <section class="screen" data-screen="trips" hidden>
       <h2 class="screen-title">Trips</h2>
-      <div id="tripCards" class="cat-cards"></div>
-
       <div class="card">
         <div class="card-head"><h3>Add a trip</h3></div>
         <label class="field"><span class="field-label">Name</span><input id="newTripName" type="text" maxlength="60" placeholder="e.g. Paris" /></label>
@@ -150,13 +148,13 @@
         </div>
         <button class="btn primary" id="addTripBtn" type="button">Add trip</button>
       </div>
+
+      <div id="tripCards" class="cat-cards"></div>
     </section>
 
     <!-- GIFTS -->
     <section class="screen" data-screen="gifts" hidden>
       <h2 class="screen-title">Gifts</h2>
-      <div id="giftCards" class="cat-cards"></div>
-
       <div class="card">
         <div class="card-head"><h3>Add a gift</h3></div>
         <label class="field"><span class="field-label">Person / event</span><input id="newGiftName" type="text" maxlength="60" placeholder="e.g. Mum's birthday" /></label>
@@ -165,6 +163,8 @@
         <label class="check toggle-row"><input id="newGiftRecurring" type="checkbox" /><span>Repeats every year</span></label>
         <button class="btn primary" id="addGiftBtn" type="button">Add gift</button>
       </div>
+
+      <div id="giftCards" class="cat-cards"></div>
     </section>
 
     <!-- SETTINGS -->
