@@ -1,5 +1,5 @@
 /* CoinCrow service worker — cache the app shell so it opens offline. */
-const CACHE = 'coincrow-v8';
+const CACHE = 'coincrow-v9';
 const SHELL = [
   './',
   './index.html',

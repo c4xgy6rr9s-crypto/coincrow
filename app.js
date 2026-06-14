@@ -6,14 +6,19 @@ const STORAGE_KEY = 'coincrow.v1';
 const FX_URL = 'https://api.frankfurter.dev/v1/latest?from=USD&to=GBP';
 const DEFAULT_CAT_EMOJI = {
   Groceries: '🛒', 'Eating out': '🍽️', Transport: '🚌', Bills: '🧾',
-  Shopping: '🛍️', Fun: '🎉', Other: '📦',
+  Shopping: '🛍️', Fun: '🎉', Travel: '✈️', Gifts: '🎁', Other: '📦',
+};
+// per-kind config for the generic "bucket" feature (trips, gifts)
+const BUCKET_KINDS = {
+  trip: { screen: 'trips', label: 'Trip', plural: 'Trips', nameLabel: 'Name', dated: true, autoByDate: true },
+  gift: { screen: 'gifts', label: 'Gift', plural: 'Gifts', nameLabel: 'Person / event', dated: false, autoByDate: false },
 };
 
 const ACCOUNT_COLORS = ['#e9c46a', '#5b8cff', '#57c98a', '#e8615f', '#c78bff', '#4ec5d6', '#f29e4c'];
 
 const DEFAULT_STATE = () => ({
   transactions: [],
-  trips: [], // { id, name, budgetGbp, startISO, endISO }
+  buckets: [], // { id, kind:'trip'|'gift', name, budgetGbp, startISO, endISO }
   accounts: [
     { name: 'Current account', currency: 'GBP', color: '#e9c46a' },
     { name: 'Credit card', currency: 'GBP', color: '#5b8cff' },
@@ -26,7 +31,8 @@ const DEFAULT_STATE = () => ({
     { name: 'Bills', monthlyBudgetGbp: 600, emoji: '🧾' },
     { name: 'Shopping', monthlyBudgetGbp: 150, emoji: '🛍️' },
     { name: 'Fun', monthlyBudgetGbp: 120, emoji: '🎉' },
-    { name: 'Travel', monthlyBudgetGbp: 0, emoji: '✈️', tripBased: true },
+    { name: 'Travel', monthlyBudgetGbp: 0, emoji: '✈️', bucketKind: 'trip' },
+    { name: 'Gifts', monthlyBudgetGbp: 0, emoji: '🎁', bucketKind: 'gift' },
     { name: 'Other', monthlyBudgetGbp: 80, emoji: '📦' },
   ],
   settings: {
@@ -49,7 +55,7 @@ function loadState() {
     const base = DEFAULT_STATE();
     return {
       transactions: migrateTransactions(parsed.transactions) || base.transactions,
-      trips: Array.isArray(parsed.trips) ? parsed.trips : base.trips,
+      buckets: migrateBuckets(parsed),
       accounts: migrateAccounts(parsed.accounts) || base.accounts,
       categories: migrateCategories(parsed.categories) || base.categories,
       settings: Object.assign(base.settings, parsed.settings || {}),
@@ -79,42 +85,57 @@ function migrateAccounts(accts) {
 function accountByName(name) { return state.accounts.find((a) => a.name === name); }
 function accountColor(name) { const a = accountByName(name); return a ? a.color : '#888888'; }
 
-// add emoji + tripBased flag to legacy categories; ensure a trip-based Travel exists
+// migrate category emoji + bucketKind; ensure a Travel (trip) and Gifts (gift) category exist
 function migrateCategories(cats) {
   if (!Array.isArray(cats) || !cats.length) return null;
   const out = cats.map((c) => ({
     name: c.name,
     monthlyBudgetGbp: c.monthlyBudgetGbp || 0,
     emoji: c.emoji || DEFAULT_CAT_EMOJI[c.name] || '🏷️',
-    tripBased: !!c.tripBased,
+    bucketKind: c.bucketKind || (c.tripBased ? 'trip' : null), // legacy tripBased -> 'trip'
   }));
-  if (!out.some((c) => c.tripBased)) {
-    out.push({ name: 'Travel', monthlyBudgetGbp: 0, emoji: '✈️', tripBased: true });
+  if (!out.some((c) => c.bucketKind === 'trip')) {
+    out.push({ name: 'Travel', monthlyBudgetGbp: 0, emoji: '✈️', bucketKind: 'trip' });
+  }
+  if (!out.some((c) => c.bucketKind === 'gift')) {
+    out.push({ name: 'Gifts', monthlyBudgetGbp: 0, emoji: '🎁', bucketKind: 'gift' });
   }
   return out;
 }
 function categoryByName(name) { return state.categories.find((c) => c.name === name); }
 function categoryEmoji(name) { const c = categoryByName(name); return c && c.emoji ? c.emoji : '🏷️'; }
-function isTripCategory(name) { const c = categoryByName(name); return !!(c && c.tripBased); }
+function bucketKindOf(name) { const c = categoryByName(name); return c ? (c.bucketKind || null) : null; }
+function isBucketCategory(name) { return !!bucketKindOf(name); }
 
-/* ---------- trips ---------- */
-function tripById(id) { return state.trips.find((t) => t.id === id); }
-function tripName(id) { const t = tripById(id); return t ? t.name : ''; }
-function tripSpent(id) {
+/* ---------- buckets (trips, gifts) ---------- */
+// build buckets[] from new `buckets` key, or migrate legacy `trips` (kind 'trip')
+function migrateBuckets(parsed) {
+  if (Array.isArray(parsed.buckets)) return parsed.buckets;
+  if (Array.isArray(parsed.trips)) return parsed.trips.map((t) => ({ ...t, kind: t.kind || 'trip' }));
+  return [];
+}
+function bucketsOfKind(kind) { return state.buckets.filter((b) => b.kind === kind); }
+function bucketById(id) { return state.buckets.find((b) => b.id === id); }
+function bucketName(id) { const b = bucketById(id); return b ? b.name : ''; }
+function bucketSpent(id) {
   return round2(state.transactions
-    .filter((t) => t.tripId === id)
+    .filter((t) => t.bucketId === id)
     .reduce((s, t) => s + t.gbpAmount, 0));
 }
-// trip whose [startISO,endISO] contains the given date (for auto-select)
-function tripForDate(dateISO) {
-  return state.trips.find((t) => t.startISO && t.endISO && dateISO >= t.startISO && dateISO <= t.endISO);
+// bucket of a kind whose [startISO,endISO] contains the date (trip auto-select)
+function bucketForDate(kind, dateISO) {
+  return state.buckets.find((b) => b.kind === kind && b.startISO && b.endISO && dateISO >= b.startISO && dateISO <= b.endISO);
 }
+function bucketYear(b) { return (b.startISO || b.endISO || '').slice(0, 4) || ''; }
 
-// ensure every transaction has a createdAt so "date entered" sorting is stable
-// (legacy rows fall back to midday on their transaction date)
+// createdAt for stable "date entered" sorting; tripId -> bucketId (legacy)
 function migrateTransactions(txns) {
   if (!Array.isArray(txns)) return null;
-  return txns.map((t) => (t.createdAt ? t : { ...t, createdAt: `${t.dateISO}T12:00:00` }));
+  return txns.map((t) => {
+    const out = t.createdAt ? { ...t } : { ...t, createdAt: `${t.dateISO}T12:00:00` };
+    if (out.bucketId === undefined) out.bucketId = out.tripId !== undefined ? out.tripId : null;
+    return out;
+  });
 }
 
 // hex (#rrggbb) -> rgba string with given alpha
@@ -246,7 +267,8 @@ function goScreen(name) {
   $$('.tab').forEach((t) => t.classList.toggle('is-active', t.dataset.go === name));
   if (name === 'dash') { dashOffset = 0; renderDashboard(); }
   if (name === 'trends') renderTrends();
-  if (name === 'trips') renderTrips();
+  if (name === 'trips') renderBuckets('trip');
+  if (name === 'gifts') renderBuckets('gift');
   if (name === 'settings') renderSettings();
   if (name === 'add') renderRecent();
   window.scrollTo(0, 0);
@@ -294,9 +316,12 @@ function initAddForm() {
     const a = accountByName($('#accountSelect').value);
     if (a) setAddCcy(a.currency);
   });
-  // show the trip picker when a trip-based category is chosen
-  $('#categorySelect').addEventListener('change', updateAddTripField);
-  $('#dateInput').addEventListener('change', () => { if (isTripCategory($('#categorySelect').value)) autoSelectTrip($('#tripSelect')); });
+  // show the bucket picker (trip/gift) when a bucket-based category is chosen
+  $('#categorySelect').addEventListener('change', updateAddBucketField);
+  $('#dateInput').addEventListener('change', () => {
+    const kind = bucketKindOf($('#categorySelect').value);
+    if (kind && BUCKET_KINDS[kind].autoByDate) autoSelectBucket(kind, $('#bucketSelect'));
+  });
 
   $('#amountInput').addEventListener('input', updateFxNote);
   $('#addForm').addEventListener('submit', onAddSubmit);
@@ -304,33 +329,35 @@ function initAddForm() {
   // seed currency from the first account
   const first = state.accounts[0];
   if (first) setAddCcy(first.currency);
-  updateAddTripField();
+  updateAddBucketField();
 }
 
-// fill a trip <select>; returns whether any trips exist
-function fillTripSelect(sel, currentId) {
+// fill a bucket <select> with buckets of a kind; returns whether any exist
+function fillBucketSelect(sel, kind, currentId) {
   sel.innerHTML = '';
-  state.trips.forEach((t) => {
+  bucketsOfKind(kind).forEach((b) => {
     const o = document.createElement('option');
-    o.value = t.id; o.textContent = t.name;
-    if (t.id === currentId) o.selected = true;
+    o.value = b.id; o.textContent = b.name;
+    if (b.id === currentId) o.selected = true;
     sel.appendChild(o);
   });
-  return state.trips.length > 0;
+  return bucketsOfKind(kind).length > 0;
 }
-// pick the trip whose dates contain the add-form date
-function autoSelectTrip(sel) {
-  const trip = tripForDate($('#dateInput').value);
-  if (trip) sel.value = trip.id;
+// pick the bucket whose dates contain the add-form date
+function autoSelectBucket(kind, sel) {
+  const b = bucketForDate(kind, $('#dateInput').value);
+  if (b) sel.value = b.id;
 }
-function updateAddTripField() {
-  const show = isTripCategory($('#categorySelect').value);
-  $('#addTripField').hidden = !show;
-  if (!show) return;
-  const has = fillTripSelect($('#tripSelect'));
-  $('#addTripHint').hidden = has;
-  $('#tripSelect').hidden = !has;
-  if (has) autoSelectTrip($('#tripSelect'));
+function updateAddBucketField() {
+  const kind = bucketKindOf($('#categorySelect').value);
+  $('#addBucketField').hidden = !kind;
+  if (!kind) return;
+  $('#addBucketLabel').textContent = BUCKET_KINDS[kind].label;
+  const has = fillBucketSelect($('#bucketSelect'), kind);
+  $('#addBucketHint').textContent = `No ${BUCKET_KINDS[kind].plural.toLowerCase()} yet — add one on the ${BUCKET_KINDS[kind].plural} tab.`;
+  $('#addBucketHint').hidden = has;
+  $('#bucketSelect').hidden = !has;
+  if (has && BUCKET_KINDS[kind].autoByDate) autoSelectBucket(kind, $('#bucketSelect'));
 }
 
 async function updateFxNote() {
@@ -385,7 +412,7 @@ async function onAddSubmit(ev) {
     fxRate,
     account: $('#accountSelect').value,
     category: $('#categorySelect').value,
-    tripId: isTripCategory($('#categorySelect').value) ? ($('#tripSelect').value || null) : null,
+    bucketId: isBucketCategory($('#categorySelect').value) ? ($('#bucketSelect').value || null) : null,
     note: $('#noteInput').value.trim(),
     pending: $('#pendingInput').checked,
   };
@@ -471,8 +498,8 @@ $('#nextMonth').addEventListener('click', () => { if (dashOffset < 0) { dashOffs
 function renderDashboard() {
   const period = periodByOffset(dashOffset);
   const frac = periodElapsedFraction(period);
-  // trip-based categories (Travel) are tracked under Trips, not the monthly budget
-  const txns = txnsInPeriod(period).filter((t) => !isTripCategory(t.category));
+  // bucket-based categories (Travel, Gifts) are tracked under their own tabs, not the monthly budget
+  const txns = txnsInPeriod(period).filter((t) => !isBucketCategory(t.category));
 
   $('#dashMonthLabel').textContent = period.label;
   $('#monthPill').textContent = periodByOffset(0).label;
@@ -486,7 +513,7 @@ function renderDashboard() {
   });
 
   let totSpent = 0, totBudget = 0, totExpected = 0;
-  const rows = state.categories.filter((c) => !c.tripBased).map((c) => {
+  const rows = state.categories.filter((c) => !c.bucketKind).map((c) => {
     const spent = round2(spentByCat[c.name] || 0);
     const base = c.monthlyBudgetGbp || 0;
     const carry = carryInFor(c.name, period.start, base);
@@ -578,15 +605,15 @@ function renderTrends() {
   const periods = [];
   for (let i = n - 1; i >= 0; i--) periods.push(periodByOffset(-i));
 
-  // total per period (excludes Travel / trip-based categories — those live under Trips)
-  const monthTxns = (p) => txnsInPeriod(p).filter((t) => !isTripCategory(t.category));
+  // total per period (excludes bucket categories — Travel/Gifts live under their own tabs)
+  const monthTxns = (p) => txnsInPeriod(p).filter((t) => !isBucketCategory(t.category));
   const totals = periods.map((p) => round2(monthTxns(p).reduce((s, t) => s + t.gbpAmount, 0)));
   $('#trendTotalChart').innerHTML = barChart(periods.map((p) => p.shortLabel), totals, null);
 
-  // category dropdown (trip-based categories excluded)
+  // category dropdown (bucket categories excluded)
   const catSel = $('#trendCategory');
   if (!catSel.dataset.ready) {
-    fillSelect(catSel, state.categories.filter((c) => !c.tripBased).map((c) => c.name));
+    fillSelect(catSel, state.categories.filter((c) => !c.bucketKind).map((c) => c.name));
     catSel.dataset.ready = '1';
   }
   const cat = catSel.value || (state.categories[0] && state.categories[0].name);
@@ -647,61 +674,84 @@ function niceCeil(v) {
 }
 
 /* ===========================================================
-   TRIPS
+   BUCKETS (trips, gifts) — generic, grouped by calendar year
    =========================================================== */
-let editingTripId = null;
+const BUCKET_FORM = {
+  trip: { name: '#newTripName', budget: '#newTripBudget', start: '#newTripStart', end: '#newTripEnd', btn: '#addTripBtn', cards: '#tripCards' },
+  gift: { name: '#newGiftName', budget: '#newGiftBudget', start: '#newGiftDate', end: null, btn: '#addGiftBtn', cards: '#giftCards' },
+};
+const editingBucketId = { trip: null, gift: null };
 
-function tripStatus(trip) {
+function bucketStatus(b) {
   const today = todayISO();
-  if (trip.startISO && today < trip.startISO) return 'upcoming';
-  if (trip.endISO && today > trip.endISO) return 'past';
+  if (b.startISO && today < b.startISO) return 'upcoming';
+  if (b.endISO && today > b.endISO) return 'past';
   return 'ongoing';
 }
-function tripDateLabel(trip) {
-  const fmt = (iso) => iso ? parseISO(iso).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }) : '—';
-  if (!trip.startISO && !trip.endISO) return 'no dates';
-  return `${fmt(trip.startISO)} → ${fmt(trip.endISO)}`;
+function bucketDateLabel(b, kind) {
+  const fmt = (iso) => parseISO(iso).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
+  if (kind === 'gift') return b.startISO ? fmt(b.startISO) : 'no date';
+  if (!b.startISO && !b.endISO) return 'no dates';
+  return `${b.startISO ? fmt(b.startISO) : '—'} → ${b.endISO ? fmt(b.endISO) : '—'}`;
 }
 
-function renderTrips() {
-  const wrap = $('#tripCards');
+function renderBuckets(kind) {
+  const cfg = BUCKET_KINDS[kind];
+  const wrap = $(BUCKET_FORM[kind].cards);
   wrap.innerHTML = '';
-  if (!state.trips.length) {
-    wrap.innerHTML = '<div class="card"><p class="muted" style="margin:0">No trips yet. Add one below, then pick it when you log a Travel transaction.</p></div>';
+  const list = bucketsOfKind(kind);
+  if (!list.length) {
+    wrap.innerHTML = `<div class="card"><p class="muted" style="margin:0">No ${cfg.plural.toLowerCase()} yet. Add one below, then pick it when you log a ${categoryForKind(kind)} transaction.</p></div>`;
     return;
   }
-  const rank = { ongoing: 0, upcoming: 1, past: 2 };
-  const sorted = [...state.trips].sort((a, b) => {
-    const ra = rank[tripStatus(a)], rb = rank[tripStatus(b)];
-    if (ra !== rb) return ra - rb;
-    return (a.startISO || '').localeCompare(b.startISO || '');
+  // group by calendar year (Undated last)
+  const groups = {};
+  list.forEach((b) => { (groups[bucketYear(b) || 'Undated'] = groups[bucketYear(b) || 'Undated'] || []).push(b); });
+  const years = Object.keys(groups).sort((a, b) => {
+    if (a === 'Undated') return 1;
+    if (b === 'Undated') return -1;
+    return a.localeCompare(b);
   });
-  sorted.forEach((trip) => wrap.appendChild(tripCard(trip)));
+  years.forEach((yr) => {
+    const items = groups[yr].sort((a, b) => (a.startISO || '').localeCompare(b.startISO || '') || a.name.localeCompare(b.name));
+    const budgetSum = round2(items.reduce((s, b) => s + (b.budgetGbp || 0), 0));
+    const spentSum = round2(items.reduce((s, b) => s + bucketSpent(b.id), 0));
+    const hdr = document.createElement('div');
+    hdr.className = 'year-head';
+    hdr.innerHTML = `<span>${yr}</span><span class="muted small">${gbp(budgetSum)} budgeted · ${gbp(spentSum)} spent</span>`;
+    wrap.appendChild(hdr);
+    items.forEach((b) => wrap.appendChild(bucketCard(b, kind)));
+  });
+}
+function categoryForKind(kind) {
+  const c = state.categories.find((x) => x.bucketKind === kind);
+  return c ? c.name : kind;
 }
 
-function tripCard(trip) {
+function bucketCard(b, kind) {
+  const cfg = BUCKET_KINDS[kind];
   const div = document.createElement('div');
   div.className = 'card cat-card';
-  const spent = tripSpent(trip.id);
-  const budget = trip.budgetGbp || 0;
+  const spent = bucketSpent(b.id);
+  const budget = b.budgetGbp || 0;
   const remaining = round2(budget - spent);
   const pct = budget > 0 ? clamp((spent / budget) * 100, 0, 100) : (spent > 0 ? 100 : 0);
   const level = (budget > 0 && spent > budget) ? 'over' : (spent > budget * 0.9 && budget > 0 ? 'warn' : 'ok');
-  const status = tripStatus(trip);
-  const txns = state.transactions.filter((t) => t.tripId === trip.id);
+  const txns = state.transactions.filter((t) => t.bucketId === b.id);
+  const statusBadge = cfg.dated ? `<span class="trip-status trip-${bucketStatus(b)}">${bucketStatus(b)}</span>` : '';
   div.innerHTML = `
     <div class="cat-head clickable">
-      <span class="cat-name">${escapeHtml(trip.name)} ${txns.length ? `<span class="cat-count">${txns.length}</span>` : ''}
-        <span class="trip-status trip-${status}">${status}</span></span>
+      <span class="cat-name">${escapeHtml(b.name)} ${txns.length ? `<span class="cat-count">${txns.length}</span>` : ''}
+        ${statusBadge}</span>
       <span class="cat-figs">${gbp(spent)} / ${gbp(budget)}</span>
     </div>
-    <div class="trip-dates muted small">${tripDateLabel(trip)}</div>
+    <div class="trip-dates muted small">${bucketDateLabel(b, kind)}</div>
     <div class="bar"><div class="bar-fill pace-${level}" style="width:${pct}%"></div></div>
     <div class="cat-foot">
       <span class="muted small">${remaining >= 0 ? `${gbp(remaining)} left` : `${gbp(-remaining)} over`}</span>
       <span class="trip-actions">
-        <button class="btn ghost small-btn trip-edit" type="button">Edit</button>
-        <button class="btn ghost small-btn danger trip-del" type="button">Delete</button>
+        <button class="btn ghost small-btn bucket-edit" type="button">Edit</button>
+        <button class="btn ghost small-btn danger bucket-del" type="button">Delete</button>
       </span>
     </div>
     <ul class="txn-list cat-txns" hidden></ul>`;
@@ -716,54 +766,59 @@ function tripCard(trip) {
     sub.hidden = !sub.hidden;
     div.classList.toggle('expanded', !sub.hidden);
   });
-  div.querySelector('.trip-edit').addEventListener('click', () => startEditTrip(trip.id));
-  div.querySelector('.trip-del').addEventListener('click', () => {
+  div.querySelector('.bucket-edit').addEventListener('click', () => startEditBucket(kind, b.id));
+  div.querySelector('.bucket-del').addEventListener('click', () => {
     const n = txns.length;
-    const msg = n ? `Delete trip "${trip.name}"? ${n} transaction(s) will keep the Travel category but lose their trip link.` : `Delete trip "${trip.name}"?`;
+    const msg = n ? `Delete "${b.name}"? ${n} transaction(s) will keep the ${categoryForKind(kind)} category but lose their ${cfg.label.toLowerCase()} link.` : `Delete "${b.name}"?`;
     if (!confirm(msg)) return;
-    state.transactions.forEach((t) => { if (t.tripId === trip.id) t.tripId = null; });
-    state.trips = state.trips.filter((x) => x.id !== trip.id);
-    if (editingTripId === trip.id) resetTripForm();
+    state.transactions.forEach((t) => { if (t.bucketId === b.id) t.bucketId = null; });
+    state.buckets = state.buckets.filter((x) => x.id !== b.id);
+    if (editingBucketId[kind] === b.id) resetBucketForm(kind);
     saveState();
-    renderTrips();
+    renderBuckets(kind);
   });
   return div;
 }
 
-function startEditTrip(id) {
-  const trip = tripById(id);
-  if (!trip) return;
-  editingTripId = id;
-  $('#newTripName').value = trip.name;
-  $('#newTripBudget').value = trip.budgetGbp || '';
-  $('#newTripStart').value = trip.startISO || '';
-  $('#newTripEnd').value = trip.endISO || '';
-  $('#addTripBtn').textContent = 'Save changes';
-  $('#newTripName').scrollIntoView({ behavior: 'smooth', block: 'center' });
+function startEditBucket(kind, id) {
+  const b = bucketById(id);
+  if (!b) return;
+  const f = BUCKET_FORM[kind];
+  editingBucketId[kind] = id;
+  $(f.name).value = b.name;
+  $(f.budget).value = b.budgetGbp || '';
+  $(f.start).value = b.startISO || '';
+  if (f.end) $(f.end).value = b.endISO || '';
+  $(f.btn).textContent = 'Save changes';
+  $(f.name).scrollIntoView({ behavior: 'smooth', block: 'center' });
 }
-function resetTripForm() {
-  editingTripId = null;
-  $('#newTripName').value = ''; $('#newTripBudget').value = '';
-  $('#newTripStart').value = ''; $('#newTripEnd').value = '';
-  $('#addTripBtn').textContent = 'Add trip';
+function resetBucketForm(kind) {
+  const f = BUCKET_FORM[kind];
+  editingBucketId[kind] = null;
+  $(f.name).value = ''; $(f.budget).value = ''; $(f.start).value = '';
+  if (f.end) $(f.end).value = '';
+  $(f.btn).textContent = `Add ${BUCKET_KINDS[kind].label.toLowerCase()}`;
 }
-
-$('#addTripBtn').addEventListener('click', () => {
-  const name = $('#newTripName').value.trim();
-  if (!name) { alert('Give the trip a name.'); return; }
-  const budgetGbp = Math.max(0, parseFloat($('#newTripBudget').value) || 0);
-  const startISO = $('#newTripStart').value || '';
-  const endISO = $('#newTripEnd').value || '';
-  if (startISO && endISO && endISO < startISO) { alert('End date is before start date.'); return; }
-  if (editingTripId) {
-    Object.assign(tripById(editingTripId), { name, budgetGbp, startISO, endISO });
+function saveBucket(kind) {
+  const f = BUCKET_FORM[kind];
+  const name = $(f.name).value.trim();
+  if (!name) { alert(`Give the ${BUCKET_KINDS[kind].label.toLowerCase()} a name.`); return; }
+  const budgetGbp = Math.max(0, parseFloat($(f.budget).value) || 0);
+  const startISO = $(f.start).value || '';
+  const endISO = f.end ? ($(f.end).value || '') : startISO; // gifts: single date
+  if (f.end && startISO && endISO && endISO < startISO) { alert('End date is before start date.'); return; }
+  if (editingBucketId[kind]) {
+    Object.assign(bucketById(editingBucketId[kind]), { name, budgetGbp, startISO, endISO });
   } else {
-    state.trips.push({ id: uid(), name, budgetGbp, startISO, endISO });
+    state.buckets.push({ id: uid(), kind, name, budgetGbp, startISO, endISO });
   }
   saveState();
-  resetTripForm();
-  renderTrips();
-});
+  resetBucketForm(kind);
+  renderBuckets(kind);
+}
+
+$('#addTripBtn').addEventListener('click', () => saveBucket('trip'));
+$('#addGiftBtn').addEventListener('click', () => saveBucket('gift'));
 
 /* ===========================================================
    SETTINGS
@@ -933,10 +988,10 @@ function csvCell(v) {
 }
 
 $('#exportTxnBtn').addEventListener('click', () => {
-  const head = ['Date', 'Account', 'Category', 'Trip', 'Currency', 'Amount', 'GBP amount', 'FX rate', 'Pending', 'Note'];
+  const head = ['Date', 'Account', 'Category', 'Trip/Gift', 'Currency', 'Amount', 'GBP amount', 'FX rate', 'Pending', 'Note'];
   const rows = [...state.transactions]
     .sort((a, b) => a.dateISO.localeCompare(b.dateISO))
-    .map((t) => [t.dateISO, t.account, t.category, t.tripId ? tripName(t.tripId) : '', t.currency, t.amount.toFixed(2),
+    .map((t) => [t.dateISO, t.account, t.category, t.bucketId ? bucketName(t.bucketId) : '', t.currency, t.amount.toFixed(2),
       t.gbpAmount.toFixed(2), t.fxRate != null ? t.fxRate : '', t.pending ? 'yes' : 'no', t.note]
       .map(csvCell).join(','));
   const csv = [head.join(','), ...rows].join('\r\n');
@@ -1005,18 +1060,21 @@ function setEditDir(dir) {
 function initEditModal() {
   $$('#editModal .ccy-btn').forEach((b) => b.addEventListener('click', () => setEditCcy(b.dataset.ccy)));
   $$('#editModal .dir-btn').forEach((b) => b.addEventListener('click', () => setEditDir(b.dataset.dir)));
-  $('#editCategory').addEventListener('change', () => setEditTripField($('#editCategory').value));
+  $('#editCategory').addEventListener('change', () => setEditBucketField($('#editCategory').value));
   $('#editClose').addEventListener('click', closeEdit);
   $('#editModal').addEventListener('click', (e) => { if (e.target.id === 'editModal') closeEdit(); });
   $('#editSave').addEventListener('click', saveEdit);
   $('#editDelete').addEventListener('click', deleteEdit);
 }
 
-// show/fill the trip picker in the edit modal for trip-based categories
-function setEditTripField(category, currentTripId) {
-  const show = isTripCategory(category);
-  $('#editTripField').hidden = !show;
-  if (show) fillTripSelect($('#editTrip'), currentTripId);
+// show/fill the bucket picker in the edit modal for bucket-based categories
+function setEditBucketField(category, currentBucketId) {
+  const kind = bucketKindOf(category);
+  $('#editBucketField').hidden = !kind;
+  if (kind) {
+    $('#editBucketLabel').textContent = BUCKET_KINDS[kind].label;
+    fillBucketSelect($('#editBucket'), kind, currentBucketId);
+  }
 }
 
 function openEdit(id) {
@@ -1033,7 +1091,7 @@ function openEdit(id) {
     : (state.settings.lastFxRate ? state.settings.lastFxRate.rate : '');
   setEditCcy(t.currency);
   setEditDir(t.amount < 0 ? 'in' : 'out');
-  setEditTripField(t.category, t.tripId);
+  setEditBucketField(t.category, t.bucketId);
   $('#editModal').hidden = false;
 }
 
@@ -1067,7 +1125,7 @@ async function saveEdit() {
     fxRate,
     account: $('#editAccount').value,
     category: $('#editCategory').value,
-    tripId: isTripCategory($('#editCategory').value) ? ($('#editTrip').value || null) : null,
+    bucketId: isBucketCategory($('#editCategory').value) ? ($('#editBucket').value || null) : null,
     note: $('#editNote').value.trim(),
     pending: $('#editPending').checked,
     dateISO: $('#editDate').value || t.dateISO,
@@ -1091,7 +1149,8 @@ function rerenderAll() {
   renderRecent();
   if (!$('[data-screen=dash]').hidden) renderDashboard();
   if (!$('[data-screen=trends]').hidden) renderTrends();
-  if (!$('[data-screen=trips]').hidden) renderTrips();
+  if (!$('[data-screen=trips]').hidden) renderBuckets('trip');
+  if (!$('[data-screen=gifts]').hidden) renderBuckets('gift');
 }
 
 /* ===========================================================

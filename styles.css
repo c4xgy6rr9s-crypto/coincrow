@@ -265,8 +265,13 @@ input[type=color] { -webkit-appearance: auto; appearance: auto; width: 42px; hei
 }
 .tab span { font-size: 19px; line-height: 1; }
 .tab.is-active { color: var(--gold); }
-.tab { font-size: 11px; }
-.tab span { font-size: 18px; }
+.tab { font-size: 10px; padding: 4px 1px; gap: 2px; }
+.tab span { font-size: 17px; }
+
+/* year grouping header in Trips / Gifts */
+.year-head { display: flex; align-items: baseline; justify-content: space-between;
+  gap: 10px; margin: 6px 2px 2px; padding-top: 4px; }
+.year-head > span:first-child { font-weight: 800; font-size: 16px; color: var(--gold); }
 
 /* trips */
 .trip-status { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.4px;

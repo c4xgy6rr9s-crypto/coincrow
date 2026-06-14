@@ -53,10 +53,10 @@
           <select id="categorySelect" required></select>
         </label>
 
-        <label class="field trip-field" id="addTripField" hidden>
-          <span class="field-label">Trip</span>
-          <select id="tripSelect"></select>
-          <span class="muted small" id="addTripHint" hidden>No trips yet — add one on the Trips tab.</span>
+        <label class="field trip-field" id="addBucketField" hidden>
+          <span class="field-label" id="addBucketLabel">Trip</span>
+          <select id="bucketSelect"></select>
+          <span class="muted small" id="addBucketHint" hidden></span>
         </label>
 
         <label class="field">
@@ -152,6 +152,20 @@
       </div>
     </section>
 
+    <!-- GIFTS -->
+    <section class="screen" data-screen="gifts" hidden>
+      <h2 class="screen-title">Gifts</h2>
+      <div id="giftCards" class="cat-cards"></div>
+
+      <div class="card">
+        <div class="card-head"><h3>Add a gift</h3></div>
+        <label class="field"><span class="field-label">Person / event</span><input id="newGiftName" type="text" maxlength="60" placeholder="e.g. Mum's birthday" /></label>
+        <label class="field"><span class="field-label">Budget target (£)</span><input id="newGiftBudget" type="number" min="0" step="1" placeholder="50" /></label>
+        <label class="field"><span class="field-label">Date <span class="muted">(optional)</span></span><input id="newGiftDate" type="date" /></label>
+        <button class="btn primary" id="addGiftBtn" type="button">Add gift</button>
+      </div>
+    </section>
+
     <!-- SETTINGS -->
     <section class="screen" data-screen="settings" hidden>
       <h2 class="screen-title">Settings</h2>
@@ -212,10 +226,11 @@
   </main>
 
   <nav class="tabbar">
-    <button class="tab is-active" data-go="add"><span>＋</span>Add</button>
+    <button class="tab is-active" data-go="add"><span>💸</span>Add</button>
     <button class="tab" data-go="dash"><span>📊</span>Budget</button>
     <button class="tab" data-go="trends"><span>📈</span>Trends</button>
-    <button class="tab" data-go="trips"><span>&#9992;&#65038;</span>Trips</button>
+    <button class="tab" data-go="trips"><span>✈️</span>Trips</button>
+    <button class="tab" data-go="gifts"><span>🎁</span>Gifts</button>
     <button class="tab" data-go="settings"><span>⚙️</span>Settings</button>
   </nav>
 
@@ -250,7 +265,7 @@
 
       <label class="field"><span class="field-label">Account</span><select id="editAccount"></select></label>
       <label class="field"><span class="field-label">Category</span><select id="editCategory"></select></label>
-      <label class="field trip-field" id="editTripField" hidden><span class="field-label">Trip</span><select id="editTrip"></select></label>
+      <label class="field trip-field" id="editBucketField" hidden><span class="field-label" id="editBucketLabel">Trip</span><select id="editBucket"></select></label>
       <label class="field"><span class="field-label">Note</span><input id="editNote" type="text" maxlength="120" /></label>
 
       <div class="field-row">
