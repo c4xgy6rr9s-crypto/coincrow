@@ -153,6 +153,7 @@ $$('.tab').forEach((t) => t.addEventListener('click', () => goScreen(t.dataset.g
    ADD TRANSACTION
    =========================================================== */
 let selectedCcy = 'GBP';
+let selectedDir = 'out'; // 'out' = spend (positive), 'in' = refund/money in (negative)
 
 function fillSelect(sel, items, current) {
   sel.innerHTML = '';
@@ -169,22 +170,31 @@ function initAddForm() {
   fillSelect($('#categorySelect'), state.categories.map((c) => c.name));
   $('#dateInput').value = todayISO();
 
-  $$('.ccy-btn').forEach((b) =>
+  $$('#addForm .ccy-btn').forEach((b) =>
     b.addEventListener('click', () => {
       selectedCcy = b.dataset.ccy;
-      $$('.ccy-btn').forEach((x) => x.classList.toggle('is-active', x === b));
+      $$('#addForm .ccy-btn').forEach((x) => x.classList.toggle('is-active', x === b));
+      updateFxNote();
+    })
+  );
+  $$('#addForm .dir-btn').forEach((b) =>
+    b.addEventListener('click', () => {
+      selectedDir = b.dataset.dir;
+      $$('#addForm .dir-btn').forEach((x) => x.classList.toggle('is-active', x === b));
       updateFxNote();
     })
   );
 
   $('#amountInput').addEventListener('input', updateFxNote);
   $('#addForm').addEventListener('submit', onAddSubmit);
+  initEditModal();
 }
 
 async function updateFxNote() {
   const note = $('#fxNote');
   if (selectedCcy !== 'USD') { note.hidden = true; return; }
-  const amt = parseFloat($('#amountInput').value);
+  const raw = parseFloat($('#amountInput').value);
+  const amt = isFinite(raw) ? Math.abs(raw) * (selectedDir === 'in' ? -1 : 1) : NaN;
   note.hidden = false;
   note.textContent = 'Fetching live USD→GBP rate…';
   try {
@@ -201,8 +211,9 @@ async function updateFxNote() {
 
 async function onAddSubmit(ev) {
   ev.preventDefault();
-  const amount = round2(parseFloat($('#amountInput').value));
-  if (!isFinite(amount) || amount <= 0) return;
+  const raw = parseFloat($('#amountInput').value);
+  if (!isFinite(raw) || raw === 0) return;
+  const amount = round2(Math.abs(raw)) * (selectedDir === 'in' ? -1 : 1);
 
   const btn = $('#saveBtn');
   btn.disabled = true;
@@ -241,9 +252,11 @@ async function onAddSubmit(ev) {
   $('#noteInput').value = '';
   $('#pendingInput').checked = false;
   $('#fxNote').hidden = true;
+  selectedDir = 'out';
+  $$('#addForm .dir-btn').forEach((x) => x.classList.toggle('is-active', x.dataset.dir === 'out'));
   btn.disabled = false;
-  flashSave(`Added ${gbp(gbpAmount)} · ${txn.category}`);
-  renderRecent();
+  flashSave(`${gbpAmount < 0 ? 'Logged' : 'Added'} ${gbp(gbpAmount)} · ${txn.category}`);
+  rerenderAll();
 }
 
 function flashSave(msg, isError) {
@@ -266,23 +279,17 @@ function renderRecent() {
 
 function txnRow(t) {
   const li = document.createElement('li');
-  li.className = 'txn';
+  li.className = 'txn clickable' + (t.gbpAmount < 0 ? ' txn-credit' : '');
   const orig = t.currency === 'USD'
-    ? `<span class="txn-orig">$${t.amount.toFixed(2)} → </span>` : '';
+    ? `<span class="txn-orig">$${Math.abs(t.amount).toFixed(2)} → </span>` : '';
   li.innerHTML = `
     <div class="txn-main">
       <span class="txn-cat">${escapeHtml(t.category)}${t.pending ? ' <em class="pending-tag">pending</em>' : ''}</span>
       <span class="txn-sub">${escapeHtml(t.account)} · ${parseISO(t.dateISO).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })}${t.note ? ' · ' + escapeHtml(t.note) : ''}</span>
     </div>
     <div class="txn-amt">${orig}${gbp(t.gbpAmount)}</div>
-    <button class="txn-del" aria-label="Delete" title="Delete">✕</button>`;
-  li.querySelector('.txn-del').addEventListener('click', () => {
-    if (confirm('Delete this charge?')) {
-      state.transactions = state.transactions.filter((x) => x.id !== t.id);
-      saveState();
-      renderRecent();
-    }
-  });
+    <span class="txn-chev" aria-hidden="true">›</span>`;
+  li.addEventListener('click', () => openEdit(t.id));
   return li;
 }
 
@@ -309,7 +316,11 @@ function renderDashboard() {
   $('#nextMonth').disabled = dashOffset >= 0;
 
   const spentByCat = {};
-  txns.forEach((t) => { spentByCat[t.category] = (spentByCat[t.category] || 0) + t.gbpAmount; });
+  const txnsByCat = {};
+  txns.forEach((t) => {
+    spentByCat[t.category] = (spentByCat[t.category] || 0) + t.gbpAmount;
+    (txnsByCat[t.category] = txnsByCat[t.category] || []).push(t);
+  });
 
   let totSpent = 0, totBudget = 0, totExpected = 0;
   const rows = state.categories.map((c) => {
@@ -342,7 +353,7 @@ function renderDashboard() {
   const wrap = $('#catCards');
   wrap.innerHTML = '';
   rows.sort((a, b) => (b.spent / (b.budget || 1)) - (a.spent / (a.budget || 1)));
-  rows.forEach((r) => wrap.appendChild(catCard(r, frac)));
+  rows.forEach((r) => wrap.appendChild(catCard(r, frac, txnsByCat[r.name] || [])));
 }
 
 function paceStatus(spent, expected, budget) {
@@ -352,16 +363,17 @@ function paceStatus(spent, expected, budget) {
   return { level: 'ok', label: '✅ On track' };
 }
 
-function catCard(r, frac) {
+function catCard(r, frac, txns) {
   const div = document.createElement('div');
   div.className = 'card cat-card';
   const pct = r.budget > 0 ? clamp((r.spent / r.budget) * 100, 0, 100) : (r.spent > 0 ? 100 : 0);
   const markerPct = clamp(frac * 100, 0, 100);
   const pace = paceStatus(r.spent, r.expected, r.budget);
   const noBudget = r.budget <= 0;
+  const count = txns.length;
   div.innerHTML = `
-    <div class="cat-head">
-      <span class="cat-name">${escapeHtml(r.name)}</span>
+    <div class="cat-head clickable">
+      <span class="cat-name">${escapeHtml(r.name)} ${count ? `<span class="cat-count">${count}</span>` : ''}</span>
       <span class="cat-figs">${gbp(r.spent)} ${noBudget ? '' : '/ ' + gbp(r.budget)}</span>
     </div>
     <div class="bar">
@@ -372,7 +384,21 @@ function catCard(r, frac) {
       <span class="badge badge-${pace.level}">${pace.label}</span>
       ${noBudget ? '<span class="muted small">no budget set</span>'
         : `<span class="muted small">${gbp(round2(r.budget - r.spent))} left</span>`}
-    </div>`;
+    </div>
+    <ul class="txn-list cat-txns" hidden></ul>`;
+  if (count) {
+    const head = div.querySelector('.cat-head');
+    const sub = div.querySelector('.cat-txns');
+    head.addEventListener('click', () => {
+      if (sub.hidden) {
+        sub.innerHTML = '';
+        [...txns].sort((a, b) => b.dateISO.localeCompare(a.dateISO) || (b.id < a.id ? -1 : 1))
+          .forEach((t) => sub.appendChild(txnRow(t)));
+      }
+      sub.hidden = !sub.hidden;
+      div.classList.toggle('expanded', !sub.hidden);
+    });
+  }
   return div;
 }
 
@@ -625,6 +651,104 @@ $('#restoreFile').addEventListener('change', (e) => {
   };
   reader.readAsText(file);
 });
+
+/* ===========================================================
+   EDIT MODAL
+   =========================================================== */
+let editingId = null;
+let editCcy = 'GBP';
+let editDir = 'out';
+
+function setEditCcy(ccy) {
+  editCcy = ccy;
+  $$('#editModal .ccy-btn').forEach((b) => b.classList.toggle('is-active', b.dataset.ccy === ccy));
+  $('#editRateField').hidden = ccy !== 'USD';
+}
+function setEditDir(dir) {
+  editDir = dir;
+  $$('#editModal .dir-btn').forEach((b) => b.classList.toggle('is-active', b.dataset.dir === dir));
+}
+
+function initEditModal() {
+  $$('#editModal .ccy-btn').forEach((b) => b.addEventListener('click', () => setEditCcy(b.dataset.ccy)));
+  $$('#editModal .dir-btn').forEach((b) => b.addEventListener('click', () => setEditDir(b.dataset.dir)));
+  $('#editClose').addEventListener('click', closeEdit);
+  $('#editModal').addEventListener('click', (e) => { if (e.target.id === 'editModal') closeEdit(); });
+  $('#editSave').addEventListener('click', saveEdit);
+  $('#editDelete').addEventListener('click', deleteEdit);
+}
+
+function openEdit(id) {
+  const t = state.transactions.find((x) => x.id === id);
+  if (!t) return;
+  editingId = id;
+  fillSelect($('#editAccount'), state.accounts, t.account);
+  fillSelect($('#editCategory'), state.categories.map((c) => c.name), t.category);
+  $('#editAmount').value = Math.abs(t.amount);
+  $('#editNote').value = t.note || '';
+  $('#editDate').value = t.dateISO;
+  $('#editPending').checked = !!t.pending;
+  $('#editRate').value = t.fxRate != null ? t.fxRate
+    : (state.settings.lastFxRate ? state.settings.lastFxRate.rate : '');
+  setEditCcy(t.currency);
+  setEditDir(t.amount < 0 ? 'in' : 'out');
+  $('#editModal').hidden = false;
+}
+
+function closeEdit() {
+  $('#editModal').hidden = true;
+  editingId = null;
+}
+
+async function saveEdit() {
+  const t = state.transactions.find((x) => x.id === editingId);
+  if (!t) return;
+  const raw = parseFloat($('#editAmount').value);
+  if (!isFinite(raw) || raw === 0) { alert('Enter a non-zero amount.'); return; }
+  const signed = round2(Math.abs(raw)) * (editDir === 'in' ? -1 : 1);
+
+  let fxRate = null, gbpAmount = signed;
+  if (editCcy === 'USD') {
+    let rate = parseFloat($('#editRate').value);
+    if (!isFinite(rate) || rate <= 0) {
+      try { rate = (await getUsdRate()).rate; }
+      catch (e) { alert('Need a USD→GBP rate — enter one in the rate field.'); return; }
+    }
+    fxRate = rate;
+    gbpAmount = round2(signed * rate);
+  }
+
+  Object.assign(t, {
+    amount: signed,
+    currency: editCcy,
+    gbpAmount,
+    fxRate,
+    account: $('#editAccount').value,
+    category: $('#editCategory').value,
+    note: $('#editNote').value.trim(),
+    pending: $('#editPending').checked,
+    dateISO: $('#editDate').value || t.dateISO,
+  });
+  saveState();
+  closeEdit();
+  rerenderAll();
+}
+
+function deleteEdit() {
+  if (!editingId) return;
+  if (!confirm('Delete this transaction?')) return;
+  state.transactions = state.transactions.filter((x) => x.id !== editingId);
+  saveState();
+  closeEdit();
+  rerenderAll();
+}
+
+// refresh recent + whichever data screen is currently visible
+function rerenderAll() {
+  renderRecent();
+  if (!$('[data-screen=dash]').hidden) renderDashboard();
+  if (!$('[data-screen=trends]').hidden) renderTrends();
+}
 
 /* ===========================================================
    INIT
