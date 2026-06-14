@@ -677,9 +677,32 @@ function niceCeil(v) {
    BUCKETS (trips, gifts) — generic, grouped by calendar year
    =========================================================== */
 const BUCKET_FORM = {
-  trip: { name: '#newTripName', budget: '#newTripBudget', start: '#newTripStart', end: '#newTripEnd', btn: '#addTripBtn', cards: '#tripCards' },
-  gift: { name: '#newGiftName', budget: '#newGiftBudget', start: '#newGiftDate', end: null, btn: '#addGiftBtn', cards: '#giftCards' },
+  trip: { name: '#newTripName', budget: '#newTripBudget', start: '#newTripStart', end: '#newTripEnd', btn: '#addTripBtn', cards: '#tripCards', recurring: null },
+  gift: { name: '#newGiftName', budget: '#newGiftBudget', start: '#newGiftDate', end: null, btn: '#addGiftBtn', cards: '#giftCards', recurring: '#newGiftRecurring' },
 };
+const yearOfISO = (iso) => (iso || '').slice(0, 4);
+function bucketSpentInYear(id, year) {
+  return round2(state.transactions
+    .filter((t) => t.bucketId === id && yearOfISO(t.dateISO) === year)
+    .reduce((s, t) => s + t.gbpAmount, 0));
+}
+// expand buckets into per-year entries; a recurring bucket appears in the current
+// year, its anchor year, and any year it has transactions in
+function bucketEntries(kind) {
+  const curYear = todayISO().slice(0, 4);
+  const entries = [];
+  bucketsOfKind(kind).forEach((b) => {
+    if (b.recurring) {
+      const years = new Set([curYear]);
+      if (bucketYear(b)) years.add(bucketYear(b));
+      state.transactions.forEach((t) => { if (t.bucketId === b.id && t.dateISO) years.add(yearOfISO(t.dateISO)); });
+      [...years].forEach((y) => entries.push({ b, year: y, spent: bucketSpentInYear(b.id, y), budget: b.budgetGbp || 0 }));
+    } else {
+      entries.push({ b, year: bucketYear(b) || 'Undated', spent: bucketSpent(b.id), budget: b.budgetGbp || 0 });
+    }
+  });
+  return entries;
+}
 const editingBucketId = { trip: null, gift: null };
 
 function bucketStatus(b) {
@@ -699,28 +722,27 @@ function renderBuckets(kind) {
   const cfg = BUCKET_KINDS[kind];
   const wrap = $(BUCKET_FORM[kind].cards);
   wrap.innerHTML = '';
-  const list = bucketsOfKind(kind);
-  if (!list.length) {
+  if (!bucketsOfKind(kind).length) {
     wrap.innerHTML = `<div class="card"><p class="muted" style="margin:0">No ${cfg.plural.toLowerCase()} yet. Add one below, then pick it when you log a ${categoryForKind(kind)} transaction.</p></div>`;
     return;
   }
-  // group by calendar year (Undated last)
+  // group per-year entries (a recurring bucket appears in multiple years)
   const groups = {};
-  list.forEach((b) => { (groups[bucketYear(b) || 'Undated'] = groups[bucketYear(b) || 'Undated'] || []).push(b); });
+  bucketEntries(kind).forEach((e) => { (groups[e.year] = groups[e.year] || []).push(e); });
   const years = Object.keys(groups).sort((a, b) => {
     if (a === 'Undated') return 1;
     if (b === 'Undated') return -1;
     return a.localeCompare(b);
   });
   years.forEach((yr) => {
-    const items = groups[yr].sort((a, b) => (a.startISO || '').localeCompare(b.startISO || '') || a.name.localeCompare(b.name));
-    const budgetSum = round2(items.reduce((s, b) => s + (b.budgetGbp || 0), 0));
-    const spentSum = round2(items.reduce((s, b) => s + bucketSpent(b.id), 0));
+    const items = groups[yr].sort((a, b) => (a.b.startISO || '').localeCompare(b.b.startISO || '') || a.b.name.localeCompare(b.b.name));
+    const budgetSum = round2(items.reduce((s, e) => s + e.budget, 0));
+    const spentSum = round2(items.reduce((s, e) => s + e.spent, 0));
     const hdr = document.createElement('div');
     hdr.className = 'year-head';
     hdr.innerHTML = `<span>${yr}</span><span class="muted small">${gbp(budgetSum)} budgeted · ${gbp(spentSum)} spent</span>`;
     wrap.appendChild(hdr);
-    items.forEach((b) => wrap.appendChild(bucketCard(b, kind)));
+    items.forEach((e) => wrap.appendChild(bucketCard(e, kind)));
   });
 }
 function categoryForKind(kind) {
@@ -728,24 +750,28 @@ function categoryForKind(kind) {
   return c ? c.name : kind;
 }
 
-function bucketCard(b, kind) {
+function bucketCard(entry, kind) {
   const cfg = BUCKET_KINDS[kind];
+  const b = entry.b;
   const div = document.createElement('div');
   div.className = 'card cat-card';
-  const spent = bucketSpent(b.id);
-  const budget = b.budgetGbp || 0;
+  const spent = entry.spent;
+  const budget = entry.budget;
   const remaining = round2(budget - spent);
   const pct = budget > 0 ? clamp((spent / budget) * 100, 0, 100) : (spent > 0 ? 100 : 0);
   const level = (budget > 0 && spent > budget) ? 'over' : (spent > budget * 0.9 && budget > 0 ? 'warn' : 'ok');
-  const txns = state.transactions.filter((t) => t.bucketId === b.id);
-  const statusBadge = cfg.dated ? `<span class="trip-status trip-${bucketStatus(b)}">${bucketStatus(b)}</span>` : '';
+  // recurring buckets show only the entry-year's transactions; others show all
+  const txns = state.transactions.filter((t) => t.bucketId === b.id && (!b.recurring || yearOfISO(t.dateISO) === entry.year));
+  const statusBadge = (cfg.dated && !b.recurring) ? `<span class="trip-status trip-${bucketStatus(b)}">${bucketStatus(b)}</span>` : '';
+  const recurBadge = b.recurring ? '<span class="trip-status trip-recurring">every year</span>' : '';
+  const dateLabel = b.recurring ? `${b.startISO ? parseISO(b.startISO).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' }) + ' · ' : ''}${entry.year}` : bucketDateLabel(b, kind);
   div.innerHTML = `
     <div class="cat-head clickable">
       <span class="cat-name">${escapeHtml(b.name)} ${txns.length ? `<span class="cat-count">${txns.length}</span>` : ''}
-        ${statusBadge}</span>
+        ${statusBadge}${recurBadge}</span>
       <span class="cat-figs">${gbp(spent)} / ${gbp(budget)}</span>
     </div>
-    <div class="trip-dates muted small">${bucketDateLabel(b, kind)}</div>
+    <div class="trip-dates muted small">${dateLabel}</div>
     <div class="bar"><div class="bar-fill pace-${level}" style="width:${pct}%"></div></div>
     <div class="cat-foot">
       <span class="muted small">${remaining >= 0 ? `${gbp(remaining)} left` : `${gbp(-remaining)} over`}</span>
@@ -789,6 +815,7 @@ function startEditBucket(kind, id) {
   $(f.budget).value = b.budgetGbp || '';
   $(f.start).value = b.startISO || '';
   if (f.end) $(f.end).value = b.endISO || '';
+  if (f.recurring) $(f.recurring).checked = !!b.recurring;
   $(f.btn).textContent = 'Save changes';
   $(f.name).scrollIntoView({ behavior: 'smooth', block: 'center' });
 }
@@ -797,6 +824,7 @@ function resetBucketForm(kind) {
   editingBucketId[kind] = null;
   $(f.name).value = ''; $(f.budget).value = ''; $(f.start).value = '';
   if (f.end) $(f.end).value = '';
+  if (f.recurring) $(f.recurring).checked = false;
   $(f.btn).textContent = `Add ${BUCKET_KINDS[kind].label.toLowerCase()}`;
 }
 function saveBucket(kind) {
@@ -806,11 +834,12 @@ function saveBucket(kind) {
   const budgetGbp = Math.max(0, parseFloat($(f.budget).value) || 0);
   const startISO = $(f.start).value || '';
   const endISO = f.end ? ($(f.end).value || '') : startISO; // gifts: single date
+  const recurring = f.recurring ? $(f.recurring).checked : false;
   if (f.end && startISO && endISO && endISO < startISO) { alert('End date is before start date.'); return; }
   if (editingBucketId[kind]) {
-    Object.assign(bucketById(editingBucketId[kind]), { name, budgetGbp, startISO, endISO });
+    Object.assign(bucketById(editingBucketId[kind]), { name, budgetGbp, startISO, endISO, recurring });
   } else {
-    state.buckets.push({ id: uid(), kind, name, budgetGbp, startISO, endISO });
+    state.buckets.push({ id: uid(), kind, name, budgetGbp, startISO, endISO, recurring });
   }
   saveState();
   resetBucketForm(kind);
@@ -838,13 +867,15 @@ function renderSettings() {
 function renderCategoryEdit() {
   const ul = $('#categoryEditList');
   ul.innerHTML = '';
-  state.categories.forEach((c, i) => {
+  // Travel/Gifts (bucket categories) are configured on their own tabs, not here
+  const visible = state.categories.filter((c) => !c.bucketKind);
+  visible.forEach((c, vi) => {
     const li = document.createElement('li');
     li.className = 'edit-row';
     li.innerHTML = `
       <div class="reorder">
-        <button class="reorder-btn up" type="button" aria-label="Move up"${i === 0 ? ' disabled' : ''}>▲</button>
-        <button class="reorder-btn down" type="button" aria-label="Move down"${i === state.categories.length - 1 ? ' disabled' : ''}>▼</button>
+        <button class="reorder-btn up" type="button" aria-label="Move up"${vi === 0 ? ' disabled' : ''}>▲</button>
+        <button class="reorder-btn down" type="button" aria-label="Move down"${vi === visible.length - 1 ? ' disabled' : ''}>▼</button>
       </div>
       <input class="cat-emoji-input" type="text" value="${escapeHtml(c.emoji || '🏷️')}" aria-label="Emoji" maxlength="4" />
       <input class="edit-name grow" type="text" value="${escapeHtml(c.name)}" maxlength="40" />
@@ -856,11 +887,12 @@ function renderCategoryEdit() {
     emojiI.addEventListener('change', () => { c.emoji = emojiI.value.trim() || '🏷️'; saveState(); });
     nameI.addEventListener('change', () => { c.name = nameI.value.trim() || c.name; saveState(); refreshDynamicSelects(); });
     budgetI.addEventListener('change', () => { c.monthlyBudgetGbp = Math.max(0, parseFloat(budgetI.value) || 0); saveState(); updateCategoryTotal(); });
-    li.querySelector('.up').addEventListener('click', () => moveCategory(i, -1));
-    li.querySelector('.down').addEventListener('click', () => moveCategory(i, 1));
+    li.querySelector('.up').addEventListener('click', () => moveCategory(c, -1));
+    li.querySelector('.down').addEventListener('click', () => moveCategory(c, 1));
     li.querySelector('.del').addEventListener('click', () => {
       if (confirm(`Remove category "${c.name}"? Existing transactions keep their label.`)) {
-        state.categories.splice(i, 1); saveState(); renderCategoryEdit(); refreshDynamicSelects();
+        state.categories = state.categories.filter((x) => x !== c);
+        saveState(); renderCategoryEdit(); refreshDynamicSelects();
       }
     });
     ul.appendChild(li);
@@ -868,11 +900,14 @@ function renderCategoryEdit() {
   updateCategoryTotal();
 }
 
-function moveCategory(i, delta) {
-  const j = i + delta;
-  if (j < 0 || j >= state.categories.length) return;
-  const [c] = state.categories.splice(i, 1);
-  state.categories.splice(j, 0, c);
+// move a category up/down among the visible (non-bucket) categories
+function moveCategory(c, delta) {
+  const visible = state.categories.filter((x) => !x.bucketKind);
+  const target = visible[visible.indexOf(c) + delta];
+  if (!target) return;
+  const ai = state.categories.indexOf(c);
+  const bi = state.categories.indexOf(target);
+  [state.categories[ai], state.categories[bi]] = [state.categories[bi], state.categories[ai]];
   saveState();
   renderCategoryEdit();
 }

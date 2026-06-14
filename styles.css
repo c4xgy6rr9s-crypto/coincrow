@@ -279,6 +279,7 @@ input[type=color] { -webkit-appearance: auto; appearance: auto; width: 42px; hei
 .trip-ongoing { background: rgba(87,201,138,0.16); color: var(--ok); }
 .trip-upcoming { background: rgba(233,196,106,0.16); color: var(--gold); }
 .trip-past { background: var(--card-2); color: var(--muted); }
+.trip-recurring { background: rgba(199,139,255,0.18); color: #c78bff; }
 .trip-dates { margin: -2px 0 9px; }
 .trip-actions { display: flex; gap: 6px; }
 .small-btn { padding: 4px 10px; font-size: 12px; }
