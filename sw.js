@@ -1,5 +1,5 @@
 /* CoinCrow service worker — cache the app shell so it opens offline. */
-const CACHE = 'coincrow-v2';
+const CACHE = 'coincrow-v3';
 const SHELL = [
   './',
   './index.html',
@@ -7,6 +7,9 @@ const SHELL = [
   './styles.css',
   './manifest.json',
   './icon.svg',
+  './icon-192.png',
+  './icon-512.png',
+  './apple-touch-icon.png',
 ];
 
 self.addEventListener('install', (event) => {
