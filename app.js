@@ -5,9 +5,15 @@
 const STORAGE_KEY = 'coincrow.v1';
 const FX_URL = 'https://api.frankfurter.dev/v1/latest?from=USD&to=GBP';
 
+const ACCOUNT_COLORS = ['#e9c46a', '#5b8cff', '#57c98a', '#e8615f', '#c78bff', '#4ec5d6', '#f29e4c'];
+
 const DEFAULT_STATE = () => ({
   transactions: [],
-  accounts: ['Current account', 'Credit card', 'Savings'],
+  accounts: [
+    { name: 'Current account', currency: 'GBP', color: '#e9c46a' },
+    { name: 'Credit card', currency: 'GBP', color: '#5b8cff' },
+    { name: 'Savings', currency: 'GBP', color: '#57c98a' },
+  ],
   categories: [
     { name: 'Groceries', monthlyBudgetGbp: 300 },
     { name: 'Eating out', monthlyBudgetGbp: 120 },
@@ -36,7 +42,7 @@ function loadState() {
     const base = DEFAULT_STATE();
     return {
       transactions: Array.isArray(parsed.transactions) ? parsed.transactions : base.transactions,
-      accounts: Array.isArray(parsed.accounts) && parsed.accounts.length ? parsed.accounts : base.accounts,
+      accounts: migrateAccounts(parsed.accounts) || base.accounts,
       categories: Array.isArray(parsed.categories) && parsed.categories.length ? parsed.categories : base.categories,
       settings: Object.assign(base.settings, parsed.settings || {}),
     };
@@ -49,6 +55,21 @@ function loadState() {
 function saveState() {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
 }
+
+// accept legacy string accounts or {name,currency,color}; normalise to objects
+function migrateAccounts(accts) {
+  if (!Array.isArray(accts) || !accts.length) return null;
+  return accts.map((a, i) => {
+    if (typeof a === 'string') return { name: a, currency: 'GBP', color: ACCOUNT_COLORS[i % ACCOUNT_COLORS.length] };
+    return {
+      name: a.name || 'Account',
+      currency: a.currency === 'USD' ? 'USD' : 'GBP',
+      color: a.color || ACCOUNT_COLORS[i % ACCOUNT_COLORS.length],
+    };
+  });
+}
+function accountByName(name) { return state.accounts.find((a) => a.name === name); }
+function accountColor(name) { const a = accountByName(name); return a ? a.color : 'transparent'; }
 
 /* ---------- helpers ---------- */
 const $ = (sel, root = document) => root.querySelector(sel);
@@ -193,18 +214,19 @@ function fillSelect(sel, items, current) {
   });
 }
 
+function setAddCcy(ccy) {
+  selectedCcy = ccy;
+  $$('#addForm .ccy-btn').forEach((x) => x.classList.toggle('is-active', x.dataset.ccy === ccy));
+  updateFxNote();
+}
+
 function initAddForm() {
-  fillSelect($('#accountSelect'), state.accounts);
+  fillSelect($('#accountSelect'), state.accounts.map((a) => a.name));
   fillSelect($('#categorySelect'), state.categories.map((c) => c.name));
   $('#dateInput').value = todayISO();
 
   $$('#addForm .ccy-btn').forEach((b) =>
-    b.addEventListener('click', () => {
-      selectedCcy = b.dataset.ccy;
-      $$('#addForm .ccy-btn').forEach((x) => x.classList.toggle('is-active', x === b));
-      updateFxNote();
-    })
-  );
+    b.addEventListener('click', () => setAddCcy(b.dataset.ccy)));
   $$('#addForm .dir-btn').forEach((b) =>
     b.addEventListener('click', () => {
       selectedDir = b.dataset.dir;
@@ -212,10 +234,18 @@ function initAddForm() {
       updateFxNote();
     })
   );
+  // default the currency from the chosen account (still overridable)
+  $('#accountSelect').addEventListener('change', () => {
+    const a = accountByName($('#accountSelect').value);
+    if (a) setAddCcy(a.currency);
+  });
 
   $('#amountInput').addEventListener('input', updateFxNote);
   $('#addForm').addEventListener('submit', onAddSubmit);
   initEditModal();
+  // seed currency from the first account
+  const first = state.accounts[0];
+  if (first) setAddCcy(first.currency);
 }
 
 async function updateFxNote() {
@@ -311,6 +341,7 @@ function txnRow(t) {
   const orig = t.currency === 'USD'
     ? `<span class="txn-orig">$${Math.abs(t.amount).toFixed(2)} → </span>` : '';
   li.innerHTML = `
+    <span class="acct-dot" style="background:${accountColor(t.account)}" title="${escapeHtml(t.account)}"></span>
     <div class="txn-main">
       <span class="txn-cat">${escapeHtml(t.category)}${t.pending ? ' <em class="pending-tag">pending</em>' : ''}</span>
       <span class="txn-sub">${escapeHtml(t.account)} · ${parseISO(t.dateISO).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })}${t.note ? ' · ' + escapeHtml(t.note) : ''}</span>
@@ -382,7 +413,7 @@ function renderDashboard() {
 
   const wrap = $('#catCards');
   wrap.innerHTML = '';
-  rows.sort((a, b) => (b.spent / (b.budget || 1)) - (a.spent / (a.budget || 1)));
+  // keep configured budget order (no-budget extras already appended at the end)
   rows.forEach((r) => wrap.appendChild(catCard(r, frac, txnsByCat[r.name] || [])));
 }
 
@@ -400,6 +431,7 @@ function catCard(r, frac, txns) {
   const markerPct = clamp(frac * 100, 0, 100);
   const pace = paceStatus(r.spent, r.expected, r.budget);
   const noBudget = r.budget <= 0;
+  const remaining = round2(r.budget - r.spent);
   const count = txns.length;
   div.innerHTML = `
     <div class="cat-head clickable">
@@ -413,7 +445,7 @@ function catCard(r, frac, txns) {
     <div class="cat-foot">
       <span class="badge badge-${pace.level}">${pace.label}</span>
       ${noBudget ? '<span class="muted small">no budget set</span>'
-        : `<span class="muted small">${gbp(round2(r.budget - r.spent))} left${r.carry ? ` · incl. ${r.carry > 0 ? '+' : ''}${gbp(r.carry)} rolled over` : ''}</span>`}
+        : `<span class="muted small">${remaining >= 0 ? `${gbp(remaining)} left` : `${gbp(-remaining)} over`}${r.carry ? ` · incl. ${r.carry > 0 ? '+' : ''}${gbp(r.carry)} rolled over` : ''}</span>`}
     </div>
     <ul class="txn-list cat-txns" hidden></ul>`;
   if (count) {
@@ -537,7 +569,7 @@ function renderCategoryEdit() {
       <button class="btn ghost del" aria-label="Remove">✕</button>`;
     const [nameI, budgetI] = li.querySelectorAll('input');
     nameI.addEventListener('change', () => { c.name = nameI.value.trim() || c.name; saveState(); refreshDynamicSelects(); });
-    budgetI.addEventListener('change', () => { c.monthlyBudgetGbp = Math.max(0, parseFloat(budgetI.value) || 0); saveState(); });
+    budgetI.addEventListener('change', () => { c.monthlyBudgetGbp = Math.max(0, parseFloat(budgetI.value) || 0); saveState(); updateCategoryTotal(); });
     li.querySelector('.del').addEventListener('click', () => {
       if (confirm(`Remove category "${c.name}"? Existing transactions keep their label.`)) {
         state.categories.splice(i, 1); saveState(); renderCategoryEdit(); refreshDynamicSelects();
@@ -545,6 +577,12 @@ function renderCategoryEdit() {
     });
     ul.appendChild(li);
   });
+  updateCategoryTotal();
+}
+
+function updateCategoryTotal() {
+  const total = state.categories.reduce((s, c) => s + (c.monthlyBudgetGbp || 0), 0);
+  $('#categoryTotal').textContent = `Total ${gbp(round2(total))}/mo`;
 }
 
 function renderAccountEdit() {
@@ -552,11 +590,21 @@ function renderAccountEdit() {
   ul.innerHTML = '';
   state.accounts.forEach((a, i) => {
     const li = document.createElement('li');
-    li.className = 'edit-row';
-    li.innerHTML = `<input class="edit-name grow" type="text" value="${escapeHtml(a)}" maxlength="40" />
+    li.className = 'edit-row account-row';
+    li.innerHTML = `
+      <input class="acct-color" type="color" value="${a.color}" aria-label="Colour" />
+      <input class="edit-name grow" type="text" value="${escapeHtml(a.name)}" maxlength="40" />
+      <select class="acct-ccy" aria-label="Default currency">
+        <option value="GBP"${a.currency === 'GBP' ? ' selected' : ''}>£ GBP</option>
+        <option value="USD"${a.currency === 'USD' ? ' selected' : ''}>$ USD</option>
+      </select>
       <button class="btn ghost del" aria-label="Remove">✕</button>`;
-    const input = li.querySelector('input');
-    input.addEventListener('change', () => { state.accounts[i] = input.value.trim() || a; saveState(); refreshDynamicSelects(); });
+    const colorI = li.querySelector('.acct-color');
+    const nameI = li.querySelector('.edit-name');
+    const ccyI = li.querySelector('.acct-ccy');
+    colorI.addEventListener('change', () => { a.color = colorI.value; saveState(); renderRecent(); });
+    nameI.addEventListener('change', () => { a.name = nameI.value.trim() || a.name; saveState(); refreshDynamicSelects(); });
+    ccyI.addEventListener('change', () => { a.currency = ccyI.value; saveState(); });
     li.querySelector('.del').addEventListener('click', () => {
       if (state.accounts.length <= 1) { alert('Keep at least one account.'); return; }
       state.accounts.splice(i, 1); saveState(); renderAccountEdit(); refreshDynamicSelects();
@@ -566,7 +614,7 @@ function renderAccountEdit() {
 }
 
 function refreshDynamicSelects() {
-  fillSelect($('#accountSelect'), state.accounts, $('#accountSelect').value);
+  fillSelect($('#accountSelect'), state.accounts.map((a) => a.name), $('#accountSelect').value);
   fillSelect($('#categorySelect'), state.categories.map((c) => c.name), $('#categorySelect').value);
   $('#trendCategory').dataset.ready = '';
 }
@@ -585,8 +633,8 @@ $('#addCategoryBtn').addEventListener('click', () => {
 $('#addAccountBtn').addEventListener('click', () => {
   const name = $('#newAccountName').value.trim();
   if (!name) return;
-  if (state.accounts.some((a) => a.toLowerCase() === name.toLowerCase())) { alert('Account exists.'); return; }
-  state.accounts.push(name);
+  if (state.accounts.some((a) => a.name.toLowerCase() === name.toLowerCase())) { alert('Account exists.'); return; }
+  state.accounts.push({ name, currency: 'GBP', color: ACCOUNT_COLORS[state.accounts.length % ACCOUNT_COLORS.length] });
   saveState();
   $('#newAccountName').value = '';
   renderAccountEdit(); refreshDynamicSelects();
@@ -718,7 +766,7 @@ function openEdit(id) {
   const t = state.transactions.find((x) => x.id === id);
   if (!t) return;
   editingId = id;
-  fillSelect($('#editAccount'), state.accounts, t.account);
+  fillSelect($('#editAccount'), state.accounts.map((a) => a.name), t.account);
   fillSelect($('#editCategory'), state.categories.map((c) => c.name), t.category);
   $('#editAmount').value = Math.abs(t.amount);
   $('#editNote').value = t.note || '';
