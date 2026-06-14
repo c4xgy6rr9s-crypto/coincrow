@@ -1,38 +1,4 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
-  <defs>
-    <linearGradient id="coin" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0" stop-color="#f2d98a"/>
-      <stop offset="1" stop-color="#e9c46a"/>
-    </linearGradient>
-    <radialGradient id="bg" cx="0.5" cy="0.4" r="0.75">
-      <stop offset="0" stop-color="#1c1e2a"/>
-      <stop offset="1" stop-color="#0c0d12"/>
-    </radialGradient>
-  </defs>
-  <rect width="512" height="512" rx="112" fill="url(#bg)"/>
-  <!-- coin -->
-  <circle cx="256" cy="318" r="118" fill="url(#coin)"/>
-  <circle cx="256" cy="318" r="118" fill="none" stroke="#caa84e" stroke-width="8"/>
-  <text x="256" y="356" font-family="Georgia, serif" font-size="120" font-weight="700"
-        fill="#7a6010" text-anchor="middle">£</text>
-  <!-- crow silhouette -->
-  <g fill="#0a0b10">
-    <path d="M256 70
-             C300 70 332 96 342 138
-             C360 132 384 138 392 158
-             C372 162 360 174 356 192
-             C372 204 384 226 384 252
-             C384 300 332 332 276 332
-             C232 332 196 312 184 280
-             C176 296 156 304 138 300
-             C150 286 152 268 146 252
-             C128 248 112 234 108 214
-             C128 220 146 216 158 204
-             C150 176 158 140 188 110
-             C212 86 232 70 256 70 Z"/>
-  </g>
-  <!-- beak -->
-  <path d="M392 158 L432 150 L394 178 Z" fill="#e9c46a"/>
-  <!-- eye -->
-  <circle cx="300" cy="150" r="9" fill="#e9c46a"/>
+  <rect width="512" height="512" rx="96" fill="#FFD23F"/>
+  <text x="50%" y="52%" font-size="320" text-anchor="middle" dominant-baseline="central">🐦‍⬛</text>
 </svg>

@@ -3,7 +3,7 @@
 /* ===== CoinCrow — personal budget tracker (static PWA) ===== */
 
 const STORAGE_KEY = 'coincrow.v1';
-const FX_URL = 'https://api.frankfurter.app/latest?from=USD&to=GBP';
+const FX_URL = 'https://api.frankfurter.dev/v1/latest?from=USD&to=GBP';
 
 const DEFAULT_STATE = () => ({
   transactions: [],

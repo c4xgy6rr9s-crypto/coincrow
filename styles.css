@@ -68,6 +68,7 @@ body::before {
 /* ---------- layout ---------- */
 main { position: relative; z-index: 1; max-width: 720px; margin: 0 auto; padding: 16px 14px 8px; }
 .screen { display: flex; flex-direction: column; gap: 14px; }
+.screen[hidden] { display: none; }
 .screen-title { margin: 2px 2px 0; font-size: 21px; font-weight: 750; }
 
 .card {
