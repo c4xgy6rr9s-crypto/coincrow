@@ -4,11 +4,16 @@
 
 const STORAGE_KEY = 'coincrow.v1';
 const FX_URL = 'https://api.frankfurter.dev/v1/latest?from=USD&to=GBP';
+const DEFAULT_CAT_EMOJI = {
+  Groceries: '🛒', 'Eating out': '🍽️', Transport: '🚌', Bills: '🧾',
+  Shopping: '🛍️', Fun: '🎉', Other: '📦',
+};
 
 const ACCOUNT_COLORS = ['#e9c46a', '#5b8cff', '#57c98a', '#e8615f', '#c78bff', '#4ec5d6', '#f29e4c'];
 
 const DEFAULT_STATE = () => ({
   transactions: [],
+  trips: [], // { id, name, budgetGbp, startISO, endISO }
   accounts: [
     { name: 'Current account', currency: 'GBP', color: '#e9c46a' },
     { name: 'Credit card', currency: 'GBP', color: '#5b8cff' },
@@ -21,6 +26,7 @@ const DEFAULT_STATE = () => ({
     { name: 'Bills', monthlyBudgetGbp: 600, emoji: '🧾' },
     { name: 'Shopping', monthlyBudgetGbp: 150, emoji: '🛍️' },
     { name: 'Fun', monthlyBudgetGbp: 120, emoji: '🎉' },
+    { name: 'Travel', monthlyBudgetGbp: 0, emoji: '✈️', tripBased: true },
     { name: 'Other', monthlyBudgetGbp: 80, emoji: '📦' },
   ],
   settings: {
@@ -43,6 +49,7 @@ function loadState() {
     const base = DEFAULT_STATE();
     return {
       transactions: migrateTransactions(parsed.transactions) || base.transactions,
+      trips: Array.isArray(parsed.trips) ? parsed.trips : base.trips,
       accounts: migrateAccounts(parsed.accounts) || base.accounts,
       categories: migrateCategories(parsed.categories) || base.categories,
       settings: Object.assign(base.settings, parsed.settings || {}),
@@ -72,21 +79,36 @@ function migrateAccounts(accts) {
 function accountByName(name) { return state.accounts.find((a) => a.name === name); }
 function accountColor(name) { const a = accountByName(name); return a ? a.color : '#888888'; }
 
-const DEFAULT_CAT_EMOJI = {
-  Groceries: '🛒', 'Eating out': '🍽️', Transport: '🚌', Bills: '🧾',
-  Shopping: '🛍️', Fun: '🎉', Other: '📦',
-};
-// add an emoji to legacy categories (by known name, else a generic tag)
+// add emoji + tripBased flag to legacy categories; ensure a trip-based Travel exists
 function migrateCategories(cats) {
   if (!Array.isArray(cats) || !cats.length) return null;
-  return cats.map((c) => ({
+  const out = cats.map((c) => ({
     name: c.name,
     monthlyBudgetGbp: c.monthlyBudgetGbp || 0,
     emoji: c.emoji || DEFAULT_CAT_EMOJI[c.name] || '🏷️',
+    tripBased: !!c.tripBased,
   }));
+  if (!out.some((c) => c.tripBased)) {
+    out.push({ name: 'Travel', monthlyBudgetGbp: 0, emoji: '✈️', tripBased: true });
+  }
+  return out;
 }
 function categoryByName(name) { return state.categories.find((c) => c.name === name); }
 function categoryEmoji(name) { const c = categoryByName(name); return c && c.emoji ? c.emoji : '🏷️'; }
+function isTripCategory(name) { const c = categoryByName(name); return !!(c && c.tripBased); }
+
+/* ---------- trips ---------- */
+function tripById(id) { return state.trips.find((t) => t.id === id); }
+function tripName(id) { const t = tripById(id); return t ? t.name : ''; }
+function tripSpent(id) {
+  return round2(state.transactions
+    .filter((t) => t.tripId === id)
+    .reduce((s, t) => s + t.gbpAmount, 0));
+}
+// trip whose [startISO,endISO] contains the given date (for auto-select)
+function tripForDate(dateISO) {
+  return state.trips.find((t) => t.startISO && t.endISO && dateISO >= t.startISO && dateISO <= t.endISO);
+}
 
 // ensure every transaction has a createdAt so "date entered" sorting is stable
 // (legacy rows fall back to midday on their transaction date)
@@ -224,6 +246,7 @@ function goScreen(name) {
   $$('.tab').forEach((t) => t.classList.toggle('is-active', t.dataset.go === name));
   if (name === 'dash') { dashOffset = 0; renderDashboard(); }
   if (name === 'trends') renderTrends();
+  if (name === 'trips') renderTrips();
   if (name === 'settings') renderSettings();
   if (name === 'add') renderRecent();
   window.scrollTo(0, 0);
@@ -271,6 +294,9 @@ function initAddForm() {
     const a = accountByName($('#accountSelect').value);
     if (a) setAddCcy(a.currency);
   });
+  // show the trip picker when a trip-based category is chosen
+  $('#categorySelect').addEventListener('change', updateAddTripField);
+  $('#dateInput').addEventListener('change', () => { if (isTripCategory($('#categorySelect').value)) autoSelectTrip($('#tripSelect')); });
 
   $('#amountInput').addEventListener('input', updateFxNote);
   $('#addForm').addEventListener('submit', onAddSubmit);
@@ -278,6 +304,33 @@ function initAddForm() {
   // seed currency from the first account
   const first = state.accounts[0];
   if (first) setAddCcy(first.currency);
+  updateAddTripField();
+}
+
+// fill a trip <select>; returns whether any trips exist
+function fillTripSelect(sel, currentId) {
+  sel.innerHTML = '';
+  state.trips.forEach((t) => {
+    const o = document.createElement('option');
+    o.value = t.id; o.textContent = t.name;
+    if (t.id === currentId) o.selected = true;
+    sel.appendChild(o);
+  });
+  return state.trips.length > 0;
+}
+// pick the trip whose dates contain the add-form date
+function autoSelectTrip(sel) {
+  const trip = tripForDate($('#dateInput').value);
+  if (trip) sel.value = trip.id;
+}
+function updateAddTripField() {
+  const show = isTripCategory($('#categorySelect').value);
+  $('#addTripField').hidden = !show;
+  if (!show) return;
+  const has = fillTripSelect($('#tripSelect'));
+  $('#addTripHint').hidden = has;
+  $('#tripSelect').hidden = !has;
+  if (has) autoSelectTrip($('#tripSelect'));
 }
 
 async function updateFxNote() {
@@ -332,6 +385,7 @@ async function onAddSubmit(ev) {
     fxRate,
     account: $('#accountSelect').value,
     category: $('#categorySelect').value,
+    tripId: isTripCategory($('#categorySelect').value) ? ($('#tripSelect').value || null) : null,
     note: $('#noteInput').value.trim(),
     pending: $('#pendingInput').checked,
   };
@@ -417,7 +471,8 @@ $('#nextMonth').addEventListener('click', () => { if (dashOffset < 0) { dashOffs
 function renderDashboard() {
   const period = periodByOffset(dashOffset);
   const frac = periodElapsedFraction(period);
-  const txns = txnsInPeriod(period);
+  // trip-based categories (Travel) are tracked under Trips, not the monthly budget
+  const txns = txnsInPeriod(period).filter((t) => !isTripCategory(t.category));
 
   $('#dashMonthLabel').textContent = period.label;
   $('#monthPill').textContent = periodByOffset(0).label;
@@ -431,7 +486,7 @@ function renderDashboard() {
   });
 
   let totSpent = 0, totBudget = 0, totExpected = 0;
-  const rows = state.categories.map((c) => {
+  const rows = state.categories.filter((c) => !c.tripBased).map((c) => {
     const spent = round2(spentByCat[c.name] || 0);
     const base = c.monthlyBudgetGbp || 0;
     const carry = carryInFor(c.name, period.start, base);
@@ -523,14 +578,15 @@ function renderTrends() {
   const periods = [];
   for (let i = n - 1; i >= 0; i--) periods.push(periodByOffset(-i));
 
-  // total per period
-  const totals = periods.map((p) => round2(txnsInPeriod(p).reduce((s, t) => s + t.gbpAmount, 0)));
+  // total per period (excludes Travel / trip-based categories — those live under Trips)
+  const monthTxns = (p) => txnsInPeriod(p).filter((t) => !isTripCategory(t.category));
+  const totals = periods.map((p) => round2(monthTxns(p).reduce((s, t) => s + t.gbpAmount, 0)));
   $('#trendTotalChart').innerHTML = barChart(periods.map((p) => p.shortLabel), totals, null);
 
-  // category dropdown
+  // category dropdown (trip-based categories excluded)
   const catSel = $('#trendCategory');
   if (!catSel.dataset.ready) {
-    fillSelect(catSel, state.categories.map((c) => c.name));
+    fillSelect(catSel, state.categories.filter((c) => !c.tripBased).map((c) => c.name));
     catSel.dataset.ready = '1';
   }
   const cat = catSel.value || (state.categories[0] && state.categories[0].name);
@@ -591,6 +647,125 @@ function niceCeil(v) {
 }
 
 /* ===========================================================
+   TRIPS
+   =========================================================== */
+let editingTripId = null;
+
+function tripStatus(trip) {
+  const today = todayISO();
+  if (trip.startISO && today < trip.startISO) return 'upcoming';
+  if (trip.endISO && today > trip.endISO) return 'past';
+  return 'ongoing';
+}
+function tripDateLabel(trip) {
+  const fmt = (iso) => iso ? parseISO(iso).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }) : '—';
+  if (!trip.startISO && !trip.endISO) return 'no dates';
+  return `${fmt(trip.startISO)} → ${fmt(trip.endISO)}`;
+}
+
+function renderTrips() {
+  const wrap = $('#tripCards');
+  wrap.innerHTML = '';
+  if (!state.trips.length) {
+    wrap.innerHTML = '<div class="card"><p class="muted" style="margin:0">No trips yet. Add one below, then pick it when you log a Travel transaction.</p></div>';
+    return;
+  }
+  const rank = { ongoing: 0, upcoming: 1, past: 2 };
+  const sorted = [...state.trips].sort((a, b) => {
+    const ra = rank[tripStatus(a)], rb = rank[tripStatus(b)];
+    if (ra !== rb) return ra - rb;
+    return (a.startISO || '').localeCompare(b.startISO || '');
+  });
+  sorted.forEach((trip) => wrap.appendChild(tripCard(trip)));
+}
+
+function tripCard(trip) {
+  const div = document.createElement('div');
+  div.className = 'card cat-card';
+  const spent = tripSpent(trip.id);
+  const budget = trip.budgetGbp || 0;
+  const remaining = round2(budget - spent);
+  const pct = budget > 0 ? clamp((spent / budget) * 100, 0, 100) : (spent > 0 ? 100 : 0);
+  const level = (budget > 0 && spent > budget) ? 'over' : (spent > budget * 0.9 && budget > 0 ? 'warn' : 'ok');
+  const status = tripStatus(trip);
+  const txns = state.transactions.filter((t) => t.tripId === trip.id);
+  div.innerHTML = `
+    <div class="cat-head clickable">
+      <span class="cat-name">${escapeHtml(trip.name)} ${txns.length ? `<span class="cat-count">${txns.length}</span>` : ''}
+        <span class="trip-status trip-${status}">${status}</span></span>
+      <span class="cat-figs">${gbp(spent)} / ${gbp(budget)}</span>
+    </div>
+    <div class="trip-dates muted small">${tripDateLabel(trip)}</div>
+    <div class="bar"><div class="bar-fill pace-${level}" style="width:${pct}%"></div></div>
+    <div class="cat-foot">
+      <span class="muted small">${remaining >= 0 ? `${gbp(remaining)} left` : `${gbp(-remaining)} over`}</span>
+      <span class="trip-actions">
+        <button class="btn ghost small-btn trip-edit" type="button">Edit</button>
+        <button class="btn ghost small-btn danger trip-del" type="button">Delete</button>
+      </span>
+    </div>
+    <ul class="txn-list cat-txns" hidden></ul>`;
+  const head = div.querySelector('.cat-head');
+  const sub = div.querySelector('.cat-txns');
+  head.addEventListener('click', () => {
+    if (sub.hidden) {
+      sub.innerHTML = '';
+      if (txns.length) sortTxns(txns).forEach((t) => sub.appendChild(txnRow(t)));
+      else sub.innerHTML = '<li class="empty">No transactions assigned yet.</li>';
+    }
+    sub.hidden = !sub.hidden;
+    div.classList.toggle('expanded', !sub.hidden);
+  });
+  div.querySelector('.trip-edit').addEventListener('click', () => startEditTrip(trip.id));
+  div.querySelector('.trip-del').addEventListener('click', () => {
+    const n = txns.length;
+    const msg = n ? `Delete trip "${trip.name}"? ${n} transaction(s) will keep the Travel category but lose their trip link.` : `Delete trip "${trip.name}"?`;
+    if (!confirm(msg)) return;
+    state.transactions.forEach((t) => { if (t.tripId === trip.id) t.tripId = null; });
+    state.trips = state.trips.filter((x) => x.id !== trip.id);
+    if (editingTripId === trip.id) resetTripForm();
+    saveState();
+    renderTrips();
+  });
+  return div;
+}
+
+function startEditTrip(id) {
+  const trip = tripById(id);
+  if (!trip) return;
+  editingTripId = id;
+  $('#newTripName').value = trip.name;
+  $('#newTripBudget').value = trip.budgetGbp || '';
+  $('#newTripStart').value = trip.startISO || '';
+  $('#newTripEnd').value = trip.endISO || '';
+  $('#addTripBtn').textContent = 'Save changes';
+  $('#newTripName').scrollIntoView({ behavior: 'smooth', block: 'center' });
+}
+function resetTripForm() {
+  editingTripId = null;
+  $('#newTripName').value = ''; $('#newTripBudget').value = '';
+  $('#newTripStart').value = ''; $('#newTripEnd').value = '';
+  $('#addTripBtn').textContent = 'Add trip';
+}
+
+$('#addTripBtn').addEventListener('click', () => {
+  const name = $('#newTripName').value.trim();
+  if (!name) { alert('Give the trip a name.'); return; }
+  const budgetGbp = Math.max(0, parseFloat($('#newTripBudget').value) || 0);
+  const startISO = $('#newTripStart').value || '';
+  const endISO = $('#newTripEnd').value || '';
+  if (startISO && endISO && endISO < startISO) { alert('End date is before start date.'); return; }
+  if (editingTripId) {
+    Object.assign(tripById(editingTripId), { name, budgetGbp, startISO, endISO });
+  } else {
+    state.trips.push({ id: uid(), name, budgetGbp, startISO, endISO });
+  }
+  saveState();
+  resetTripForm();
+  renderTrips();
+});
+
+/* ===========================================================
    SETTINGS
    =========================================================== */
 function renderSettings() {
@@ -612,6 +787,10 @@ function renderCategoryEdit() {
     const li = document.createElement('li');
     li.className = 'edit-row';
     li.innerHTML = `
+      <div class="reorder">
+        <button class="reorder-btn up" type="button" aria-label="Move up"${i === 0 ? ' disabled' : ''}>▲</button>
+        <button class="reorder-btn down" type="button" aria-label="Move down"${i === state.categories.length - 1 ? ' disabled' : ''}>▼</button>
+      </div>
       <input class="cat-emoji-input" type="text" value="${escapeHtml(c.emoji || '🏷️')}" aria-label="Emoji" maxlength="4" />
       <input class="edit-name grow" type="text" value="${escapeHtml(c.name)}" maxlength="40" />
       <div class="edit-budget"><span>£</span><input type="number" min="0" step="1" value="${c.monthlyBudgetGbp}" /></div>
@@ -622,6 +801,8 @@ function renderCategoryEdit() {
     emojiI.addEventListener('change', () => { c.emoji = emojiI.value.trim() || '🏷️'; saveState(); });
     nameI.addEventListener('change', () => { c.name = nameI.value.trim() || c.name; saveState(); refreshDynamicSelects(); });
     budgetI.addEventListener('change', () => { c.monthlyBudgetGbp = Math.max(0, parseFloat(budgetI.value) || 0); saveState(); updateCategoryTotal(); });
+    li.querySelector('.up').addEventListener('click', () => moveCategory(i, -1));
+    li.querySelector('.down').addEventListener('click', () => moveCategory(i, 1));
     li.querySelector('.del').addEventListener('click', () => {
       if (confirm(`Remove category "${c.name}"? Existing transactions keep their label.`)) {
         state.categories.splice(i, 1); saveState(); renderCategoryEdit(); refreshDynamicSelects();
@@ -630,6 +811,15 @@ function renderCategoryEdit() {
     ul.appendChild(li);
   });
   updateCategoryTotal();
+}
+
+function moveCategory(i, delta) {
+  const j = i + delta;
+  if (j < 0 || j >= state.categories.length) return;
+  const [c] = state.categories.splice(i, 1);
+  state.categories.splice(j, 0, c);
+  saveState();
+  renderCategoryEdit();
 }
 
 function updateCategoryTotal() {
@@ -743,10 +933,10 @@ function csvCell(v) {
 }
 
 $('#exportTxnBtn').addEventListener('click', () => {
-  const head = ['Date', 'Account', 'Category', 'Currency', 'Amount', 'GBP amount', 'FX rate', 'Pending', 'Note'];
+  const head = ['Date', 'Account', 'Category', 'Trip', 'Currency', 'Amount', 'GBP amount', 'FX rate', 'Pending', 'Note'];
   const rows = [...state.transactions]
     .sort((a, b) => a.dateISO.localeCompare(b.dateISO))
-    .map((t) => [t.dateISO, t.account, t.category, t.currency, t.amount.toFixed(2),
+    .map((t) => [t.dateISO, t.account, t.category, t.tripId ? tripName(t.tripId) : '', t.currency, t.amount.toFixed(2),
       t.gbpAmount.toFixed(2), t.fxRate != null ? t.fxRate : '', t.pending ? 'yes' : 'no', t.note]
       .map(csvCell).join(','));
   const csv = [head.join(','), ...rows].join('\r\n');
@@ -815,10 +1005,18 @@ function setEditDir(dir) {
 function initEditModal() {
   $$('#editModal .ccy-btn').forEach((b) => b.addEventListener('click', () => setEditCcy(b.dataset.ccy)));
   $$('#editModal .dir-btn').forEach((b) => b.addEventListener('click', () => setEditDir(b.dataset.dir)));
+  $('#editCategory').addEventListener('change', () => setEditTripField($('#editCategory').value));
   $('#editClose').addEventListener('click', closeEdit);
   $('#editModal').addEventListener('click', (e) => { if (e.target.id === 'editModal') closeEdit(); });
   $('#editSave').addEventListener('click', saveEdit);
   $('#editDelete').addEventListener('click', deleteEdit);
+}
+
+// show/fill the trip picker in the edit modal for trip-based categories
+function setEditTripField(category, currentTripId) {
+  const show = isTripCategory(category);
+  $('#editTripField').hidden = !show;
+  if (show) fillTripSelect($('#editTrip'), currentTripId);
 }
 
 function openEdit(id) {
@@ -835,6 +1033,7 @@ function openEdit(id) {
     : (state.settings.lastFxRate ? state.settings.lastFxRate.rate : '');
   setEditCcy(t.currency);
   setEditDir(t.amount < 0 ? 'in' : 'out');
+  setEditTripField(t.category, t.tripId);
   $('#editModal').hidden = false;
 }
 
@@ -868,6 +1067,7 @@ async function saveEdit() {
     fxRate,
     account: $('#editAccount').value,
     category: $('#editCategory').value,
+    tripId: isTripCategory($('#editCategory').value) ? ($('#editTrip').value || null) : null,
     note: $('#editNote').value.trim(),
     pending: $('#editPending').checked,
     dateISO: $('#editDate').value || t.dateISO,
@@ -891,6 +1091,7 @@ function rerenderAll() {
   renderRecent();
   if (!$('[data-screen=dash]').hidden) renderDashboard();
   if (!$('[data-screen=trends]').hidden) renderTrends();
+  if (!$('[data-screen=trips]').hidden) renderTrips();
 }
 
 /* ===========================================================

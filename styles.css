@@ -265,6 +265,24 @@ input[type=color] { -webkit-appearance: auto; appearance: auto; width: 42px; hei
 }
 .tab span { font-size: 19px; line-height: 1; }
 .tab.is-active { color: var(--gold); }
+.tab { font-size: 11px; }
+.tab span { font-size: 18px; }
+
+/* trips */
+.trip-status { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.4px;
+  padding: 1px 7px; border-radius: 99px; margin-left: 4px; vertical-align: middle; }
+.trip-ongoing { background: rgba(87,201,138,0.16); color: var(--ok); }
+.trip-upcoming { background: rgba(233,196,106,0.16); color: var(--gold); }
+.trip-past { background: var(--card-2); color: var(--muted); }
+.trip-dates { margin: -2px 0 9px; }
+.trip-actions { display: flex; gap: 6px; }
+.small-btn { padding: 4px 10px; font-size: 12px; }
+
+/* category reorder controls */
+.reorder { display: flex; flex-direction: column; gap: 2px; flex: none; }
+.reorder-btn { background: var(--card-2); color: var(--text); border: 1px solid var(--border);
+  border-radius: 6px; width: 26px; height: 18px; line-height: 1; font-size: 9px; padding: 0; cursor: pointer; }
+.reorder-btn:disabled { opacity: 0.3; cursor: default; }
 
 @media (max-width: 420px) {
   .summary-grid strong { font-size: 17px; }

@@ -53,6 +53,12 @@
           <select id="categorySelect" required></select>
         </label>
 
+        <label class="field trip-field" id="addTripField" hidden>
+          <span class="field-label">Trip</span>
+          <select id="tripSelect"></select>
+          <span class="muted small" id="addTripHint" hidden>No trips yet — add one on the Trips tab.</span>
+        </label>
+
         <label class="field">
           <span class="field-label">Note <span class="muted">(optional)</span></span>
           <input id="noteInput" type="text" maxlength="120" placeholder="e.g. Tesco" />
@@ -129,6 +135,23 @@
       </div>
     </section>
 
+    <!-- TRIPS -->
+    <section class="screen" data-screen="trips" hidden>
+      <h2 class="screen-title">Trips</h2>
+      <div id="tripCards" class="cat-cards"></div>
+
+      <div class="card">
+        <div class="card-head"><h3>Add a trip</h3></div>
+        <label class="field"><span class="field-label">Name</span><input id="newTripName" type="text" maxlength="60" placeholder="e.g. Paris" /></label>
+        <label class="field"><span class="field-label">Budget target (£)</span><input id="newTripBudget" type="number" min="0" step="1" placeholder="800" /></label>
+        <div class="field-row">
+          <label class="field grow"><span class="field-label">Start</span><input id="newTripStart" type="date" /></label>
+          <label class="field grow"><span class="field-label">End</span><input id="newTripEnd" type="date" /></label>
+        </div>
+        <button class="btn primary" id="addTripBtn" type="button">Add trip</button>
+      </div>
+    </section>
+
     <!-- SETTINGS -->
     <section class="screen" data-screen="settings" hidden>
       <h2 class="screen-title">Settings</h2>
@@ -192,6 +215,7 @@
     <button class="tab is-active" data-go="add"><span>＋</span>Add</button>
     <button class="tab" data-go="dash"><span>📊</span>Budget</button>
     <button class="tab" data-go="trends"><span>📈</span>Trends</button>
+    <button class="tab" data-go="trips"><span>&#9992;&#65038;</span>Trips</button>
     <button class="tab" data-go="settings"><span>⚙️</span>Settings</button>
   </nav>
 
@@ -226,6 +250,7 @@
 
       <label class="field"><span class="field-label">Account</span><select id="editAccount"></select></label>
       <label class="field"><span class="field-label">Category</span><select id="editCategory"></select></label>
+      <label class="field trip-field" id="editTripField" hidden><span class="field-label">Trip</span><select id="editTrip"></select></label>
       <label class="field"><span class="field-label">Note</span><input id="editNote" type="text" maxlength="120" /></label>
 
       <div class="field-row">
