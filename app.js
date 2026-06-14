@@ -686,23 +686,37 @@ function bucketSpentInYear(id, year) {
     .filter((t) => t.bucketId === id && yearOfISO(t.dateISO) === year)
     .reduce((s, t) => s + t.gbpAmount, 0));
 }
-// expand buckets into per-year entries; a recurring bucket appears in the current
-// year, its anchor year, and any year it has transactions in
+// expand buckets into per-year entries, each classified past | current | future
+// by its date relative to today (a recurring bucket yields one entry per relevant year)
 function bucketEntries(kind) {
-  const curYear = todayISO().slice(0, 4);
+  const today = todayISO();
+  const curYear = today.slice(0, 4);
+  const nextYear = String(Number(curYear) + 1);
   const entries = [];
   bucketsOfKind(kind).forEach((b) => {
     if (b.recurring) {
-      const anchor = bucketYear(b); // start year (the date entered)
-      const years = new Set();
-      // current year only once the gift has started (don't assume past events)
-      if (!anchor || curYear >= anchor) years.add(curYear);
-      if (anchor) years.add(anchor);
-      // always show any year that actually has transactions
+      const md = b.startISO ? b.startISO.slice(4) : ''; // '-MM-DD' anchor
+      // the next occurrence is this year if it hasn't passed, otherwise next year
+      const nextOcc = (!md || (curYear + md) >= today) ? curYear : nextYear;
+      const years = new Set([nextOcc]);
       state.transactions.forEach((t) => { if (t.bucketId === b.id && t.dateISO) years.add(yearOfISO(t.dateISO)); });
-      [...years].forEach((y) => entries.push({ b, year: y, spent: bucketSpentInYear(b.id, y), budget: b.budgetGbp || 0 }));
+      [...years].forEach((y) => {
+        const effDate = md ? y + md : '';
+        let cls;
+        if (y === nextOcc) cls = 'current';            // the upcoming occurrence
+        else if (effDate && effDate < today) cls = 'past';
+        else if (y > curYear) cls = 'future';
+        else cls = 'current';
+        entries.push({ b, year: y, spent: bucketSpentInYear(b.id, y), budget: b.budgetGbp || 0, cls });
+      });
     } else {
-      entries.push({ b, year: bucketYear(b) || 'Undated', spent: bucketSpent(b.id), budget: b.budgetGbp || 0 });
+      const year = bucketYear(b) || 'Undated';
+      const effDate = (kind === 'trip' ? (b.endISO || b.startISO) : b.startISO) || '';
+      let cls;
+      if (effDate && effDate < today) cls = 'past';     // already happened (any year incl. this one)
+      else if (year !== 'Undated' && year > curYear) cls = 'future';
+      else cls = 'current';
+      entries.push({ b, year, spent: bucketSpent(b.id), budget: b.budgetGbp || 0, cls });
     }
   });
   return entries;
@@ -733,48 +747,54 @@ function renderBuckets(kind) {
     wrap.innerHTML = `<div class="card"><p class="muted" style="margin:0">No ${cfg.plural.toLowerCase()} yet. Add one below, then pick it when you log a ${categoryForKind(kind)} transaction.</p></div>`;
     return;
   }
-  // group per-year entries (a recurring bucket appears in multiple years)
-  const groups = {};
-  bucketEntries(kind).forEach((e) => { (groups[e.year] = groups[e.year] || []).push(e); });
-  const curYear = todayISO().slice(0, 4);
-  const dated = Object.keys(groups).filter((y) => y !== 'Undated');
-  const future = dated.filter((y) => y > curYear).sort((a, b) => b.localeCompare(a)); // newest first
-  const current = dated.filter((y) => y === curYear);
-  const past = dated.filter((y) => y < curYear).sort((a, b) => b.localeCompare(a));
-  const undated = groups.Undated ? ['Undated'] : [];
+  const entries = bucketEntries(kind);
+  const past = entries.filter((e) => e.cls === 'past');
+  const current = entries.filter((e) => e.cls === 'current');
+  const future = entries.filter((e) => e.cls === 'future');
 
-  const renderYear = (yr) => {
-    const items = groups[yr].sort((a, b) => (a.b.startISO || '').localeCompare(b.b.startISO || '') || a.b.name.localeCompare(b.b.name));
-    const budgetSum = round2(items.reduce((s, e) => s + e.budget, 0));
-    const spentSum = round2(items.reduce((s, e) => s + e.spent, 0));
-    const hdr = document.createElement('div');
-    hdr.className = 'year-head';
-    hdr.innerHTML = `<span>${yr}</span><span class="muted small">${gbp(budgetSum)} budgeted · ${gbp(spentSum)} spent</span>`;
-    wrap.appendChild(hdr);
-    items.forEach((e) => wrap.appendChild(bucketCard(e, kind)));
+  // render a set of entries grouped by year, years ordered asc/desc
+  const renderGroup = (list, dir) => {
+    const groups = {};
+    list.forEach((e) => { (groups[e.year] = groups[e.year] || []).push(e); });
+    const yrs = Object.keys(groups).sort((a, b) => {
+      if (a === 'Undated') return 1;
+      if (b === 'Undated') return -1;
+      return dir === 'asc' ? a.localeCompare(b) : b.localeCompare(a);
+    });
+    yrs.forEach((yr) => {
+      const items = groups[yr].sort((a, b) => (a.b.startISO || '').localeCompare(b.b.startISO || '') || a.b.name.localeCompare(b.b.name));
+      const budgetSum = round2(items.reduce((s, e) => s + e.budget, 0));
+      const spentSum = round2(items.reduce((s, e) => s + e.spent, 0));
+      const hdr = document.createElement('div');
+      hdr.className = 'year-head';
+      hdr.innerHTML = `<span>${yr}</span><span class="muted small">${gbp(budgetSum)} budgeted · ${gbp(spentSum)} spent</span>`;
+      wrap.appendChild(hdr);
+      items.forEach((e) => wrap.appendChild(bucketCard(e, kind)));
+    });
   };
-  const toggleBtn = (cls, on, label, count, onclick) => {
+  const toggleBtn = (on, label, count, onclick) => {
     const btn = document.createElement('button');
-    btn.className = `btn ghost ${cls}`;
+    btn.className = 'btn ghost show-year-btn';
     btn.type = 'button';
     btn.textContent = on ? `Hide ${label}` : `Show ${label} (${count})`;
     btn.addEventListener('click', onclick);
     wrap.appendChild(btn);
   };
 
-  // future (newest first) — collapsed by default, sits above the current year
-  if (future.length) {
-    toggleBtn('show-year-btn', showFuture[kind], 'future years', future.length,
-      () => { showFuture[kind] = !showFuture[kind]; renderBuckets(kind); });
-    if (showFuture[kind]) future.forEach(renderYear);
-  }
-  current.forEach(renderYear);
-  undated.forEach(renderYear);
-  // past (newest first) — collapsed by default, sits at the bottom
+  // top: button to reveal past events (already happened), shown above the current ones
   if (past.length) {
-    toggleBtn('show-year-btn', showPast[kind], 'past years', past.length,
+    toggleBtn(showPast[kind], 'past events', past.length,
       () => { showPast[kind] = !showPast[kind]; renderBuckets(kind); });
-    if (showPast[kind]) past.forEach(renderYear);
+    if (showPast[kind]) renderGroup(past, 'desc'); // most recent past nearest the top
+  }
+  // current / upcoming (default)
+  renderGroup(current, 'asc');
+  // bottom: button to reveal future years, listed below
+  if (future.length) {
+    const futureYears = new Set(future.map((e) => e.year)).size;
+    toggleBtn(showFuture[kind], 'future years', futureYears,
+      () => { showFuture[kind] = !showFuture[kind]; renderBuckets(kind); });
+    if (showFuture[kind]) renderGroup(future, 'asc');
   }
 }
 function categoryForKind(kind) {
