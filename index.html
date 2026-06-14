@@ -1,0 +1,185 @@
+<!DOCTYPE html>
+<html lang="en-GB">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <meta name="theme-color" content="#0c0d12" />
+  <title>CoinCrow</title>
+  <link rel="manifest" href="manifest.json" />
+  <link rel="icon" href="icon.svg" type="image/svg+xml" />
+  <link rel="apple-touch-icon" href="icon.svg" />
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <span class="brand-logo" aria-hidden="true">🐦‍⬛</span>
+      <span class="brand-name">CoinCrow</span>
+    </div>
+    <div class="month-pill" id="monthPill"></div>
+  </header>
+
+  <main id="screens">
+    <!-- ADD -->
+    <section class="screen" data-screen="add">
+      <form id="addForm" class="card add-card" autocomplete="off">
+        <h2 class="screen-title">Add charge</h2>
+
+        <label class="field amount-field">
+          <span class="field-label">Amount</span>
+          <div class="amount-row">
+            <div class="ccy-toggle" role="group" aria-label="Currency">
+              <button type="button" class="ccy-btn is-active" data-ccy="GBP">£ GBP</button>
+              <button type="button" class="ccy-btn" data-ccy="USD">$ USD</button>
+            </div>
+            <input class="amount-input" id="amountInput" type="number" inputmode="decimal"
+                   step="0.01" min="0" placeholder="0.00" required />
+          </div>
+          <div class="fx-note" id="fxNote" hidden></div>
+        </label>
+
+        <label class="field">
+          <span class="field-label">Account</span>
+          <select id="accountSelect" required></select>
+        </label>
+
+        <label class="field">
+          <span class="field-label">Category</span>
+          <select id="categorySelect" required></select>
+        </label>
+
+        <label class="field">
+          <span class="field-label">Note <span class="muted">(optional)</span></span>
+          <input id="noteInput" type="text" maxlength="120" placeholder="e.g. Tesco" />
+        </label>
+
+        <div class="field-row">
+          <label class="field grow">
+            <span class="field-label">Date</span>
+            <input id="dateInput" type="date" required />
+          </label>
+          <label class="check">
+            <input id="pendingInput" type="checkbox" />
+            <span>Pending</span>
+          </label>
+        </div>
+
+        <button type="submit" class="btn primary big" id="saveBtn">Add charge</button>
+        <p class="save-flash" id="saveFlash" hidden></p>
+      </form>
+
+      <div class="card recent-card">
+        <div class="card-head">
+          <h3>Recent</h3>
+          <span class="muted" id="recentCount"></span>
+        </div>
+        <ul class="txn-list" id="recentList"></ul>
+      </div>
+    </section>
+
+    <!-- DASHBOARD -->
+    <section class="screen" data-screen="dash" hidden>
+      <div class="month-nav">
+        <button class="btn ghost" id="prevMonth" aria-label="Previous month">‹</button>
+        <h2 class="screen-title" id="dashMonthLabel"></h2>
+        <button class="btn ghost" id="nextMonth" aria-label="Next month">›</button>
+      </div>
+
+      <div class="card summary-card">
+        <div class="summary-grid">
+          <div><span class="muted">Spent</span><strong id="sumSpent">£0</strong></div>
+          <div><span class="muted">Budget</span><strong id="sumBudget">£0</strong></div>
+          <div><span class="muted">Expected by now</span><strong id="sumExpected">£0</strong></div>
+          <div><span class="muted">Remaining</span><strong id="sumRemaining">£0</strong></div>
+        </div>
+        <div class="pace-banner" id="paceBanner"></div>
+      </div>
+
+      <div id="catCards" class="cat-cards"></div>
+    </section>
+
+    <!-- TRENDS -->
+    <section class="screen" data-screen="trends" hidden>
+      <h2 class="screen-title">Trends</h2>
+      <div class="card">
+        <div class="card-head">
+          <h3>Spend per month</h3>
+          <select id="trendRange" class="inline-select">
+            <option value="6">Last 6 months</option>
+            <option value="12" selected>Last 12 months</option>
+          </select>
+        </div>
+        <div id="trendTotalChart" class="chart-wrap"></div>
+      </div>
+      <div class="card">
+        <div class="card-head">
+          <h3>By category</h3>
+          <select id="trendCategory" class="inline-select"></select>
+        </div>
+        <div id="trendCatChart" class="chart-wrap"></div>
+      </div>
+    </section>
+
+    <!-- SETTINGS -->
+    <section class="screen" data-screen="settings" hidden>
+      <h2 class="screen-title">Settings</h2>
+
+      <div class="card">
+        <div class="card-head"><h3>Categories &amp; budgets</h3></div>
+        <ul class="edit-list" id="categoryEditList"></ul>
+        <div class="add-inline">
+          <input id="newCategoryName" type="text" placeholder="New category" maxlength="40" />
+          <input id="newCategoryBudget" type="number" min="0" step="1" placeholder="£/mo" />
+          <button class="btn" id="addCategoryBtn" type="button">Add</button>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-head"><h3>Accounts</h3></div>
+        <ul class="edit-list" id="accountEditList"></ul>
+        <div class="add-inline">
+          <input id="newAccountName" type="text" placeholder="New account" maxlength="40" />
+          <button class="btn" id="addAccountBtn" type="button">Add</button>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-head"><h3>Preferences</h3></div>
+        <label class="field">
+          <span class="field-label">Month starts on day</span>
+          <input id="monthStartDay" type="number" min="1" max="28" />
+        </label>
+        <label class="field">
+          <span class="field-label">USD → GBP rate</span>
+          <div class="rate-row">
+            <input id="fxRateInput" type="number" min="0" step="0.0001" />
+            <button class="btn" id="refreshRateBtn" type="button">Refresh</button>
+          </div>
+          <span class="muted" id="fxRateMeta"></span>
+        </label>
+      </div>
+
+      <div class="card">
+        <div class="card-head"><h3>Data</h3></div>
+        <div class="btn-grid">
+          <button class="btn" id="exportTxnBtn" type="button">Export transactions (CSV)</button>
+          <button class="btn" id="exportSummaryBtn" type="button">Export month summary (CSV)</button>
+          <button class="btn" id="backupBtn" type="button">Backup all (JSON)</button>
+          <button class="btn" id="restoreBtn" type="button">Restore from JSON</button>
+        </div>
+        <input id="restoreFile" type="file" accept="application/json,.json" hidden />
+        <p class="muted small">Data lives only in this browser. Back up regularly — clearing site data wipes it.</p>
+      </div>
+    </section>
+  </main>
+
+  <nav class="tabbar">
+    <button class="tab is-active" data-go="add"><span>＋</span>Add</button>
+    <button class="tab" data-go="dash"><span>📊</span>Budget</button>
+    <button class="tab" data-go="trends"><span>📈</span>Trends</button>
+    <button class="tab" data-go="settings"><span>⚙️</span>Settings</button>
+  </nav>
+
+  <script src="app.js"></script>
+</body>
+</html>

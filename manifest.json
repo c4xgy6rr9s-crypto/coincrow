@@ -1,0 +1,14 @@
+{
+  "name": "CoinCrow",
+  "short_name": "CoinCrow",
+  "description": "Personal transaction & budget tracker with prorated pacing and GBP/USD support.",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#0c0d12",
+  "theme_color": "#0c0d12",
+  "icons": [
+    { "src": "icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }
+  ]
+}
