@@ -285,8 +285,10 @@ input[type=color] { -webkit-appearance: auto; appearance: auto; width: 42px; hei
 .trip-actions { display: flex; gap: 6px; }
 .small-btn { padding: 4px 10px; font-size: 12px; }
 
-/* category reorder controls */
-.reorder { display: flex; flex-direction: column; gap: 2px; flex: none; }
+/* reorder controls — hidden until the section's Reorder button is toggled */
+.head-right { display: flex; align-items: center; gap: 10px; }
+.reorder { display: none; flex-direction: column; gap: 2px; flex: none; }
+.show-reorder .reorder { display: flex; }
 .reorder-btn { background: var(--card-2); color: var(--text); border: 1px solid var(--border);
   border-radius: 6px; width: 26px; height: 18px; line-height: 1; font-size: 9px; padding: 0; cursor: pointer; }
 .reorder-btn:disabled { opacity: 0.3; cursor: default; }

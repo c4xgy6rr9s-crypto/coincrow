@@ -172,7 +172,9 @@
       <h2 class="screen-title">Settings</h2>
 
       <div class="card">
-        <div class="card-head"><h3>Categories &amp; budgets</h3><strong id="categoryTotal" class="cat-total"></strong></div>
+        <div class="card-head"><h3>Categories &amp; budgets</h3>
+          <span class="head-right"><strong id="categoryTotal" class="cat-total"></strong>
+            <button class="btn ghost small-btn" id="reorderCatBtn" type="button">Reorder</button></span></div>
         <ul class="edit-list" id="categoryEditList"></ul>
         <div class="add-inline">
           <input id="newCategoryEmoji" class="cat-emoji-input" type="text" placeholder="🏷️" maxlength="4" aria-label="Emoji" />
@@ -183,7 +185,8 @@
       </div>
 
       <div class="card">
-        <div class="card-head"><h3>Accounts</h3></div>
+        <div class="card-head"><h3>Accounts</h3>
+          <button class="btn ghost small-btn" id="reorderAcctBtn" type="button">Reorder</button></div>
         <ul class="edit-list" id="accountEditList"></ul>
         <div class="add-inline">
           <input id="newAccountName" type="text" placeholder="New account" maxlength="40" />

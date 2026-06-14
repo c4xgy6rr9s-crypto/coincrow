@@ -693,8 +693,12 @@ function bucketEntries(kind) {
   const entries = [];
   bucketsOfKind(kind).forEach((b) => {
     if (b.recurring) {
-      const years = new Set([curYear]);
-      if (bucketYear(b)) years.add(bucketYear(b));
+      const anchor = bucketYear(b); // start year (the date entered)
+      const years = new Set();
+      // current year only once the gift has started (don't assume past events)
+      if (!anchor || curYear >= anchor) years.add(curYear);
+      if (anchor) years.add(anchor);
+      // always show any year that actually has transactions
       state.transactions.forEach((t) => { if (t.bucketId === b.id && t.dateISO) years.add(yearOfISO(t.dateISO)); });
       [...years].forEach((y) => entries.push({ b, year: y, spent: bucketSpentInYear(b.id, y), budget: b.budgetGbp || 0 }));
     } else {
@@ -852,6 +856,8 @@ $('#addGiftBtn').addEventListener('click', () => saveBucket('gift'));
 /* ===========================================================
    SETTINGS
    =========================================================== */
+const reorderMode = { cat: false, acct: false };
+
 function renderSettings() {
   renderCategoryEdit();
   renderAccountEdit();
@@ -897,6 +903,7 @@ function renderCategoryEdit() {
     });
     ul.appendChild(li);
   });
+  ul.classList.toggle('show-reorder', reorderMode.cat);
   updateCategoryTotal();
 }
 
@@ -924,6 +931,10 @@ function renderAccountEdit() {
     const li = document.createElement('li');
     li.className = 'edit-row account-row';
     li.innerHTML = `
+      <div class="reorder">
+        <button class="reorder-btn up" type="button" aria-label="Move up"${i === 0 ? ' disabled' : ''}>▲</button>
+        <button class="reorder-btn down" type="button" aria-label="Move down"${i === state.accounts.length - 1 ? ' disabled' : ''}>▼</button>
+      </div>
       <input class="acct-color" type="color" value="${a.color}" aria-label="Colour" />
       <input class="edit-name grow" type="text" value="${escapeHtml(a.name)}" maxlength="40" />
       <select class="acct-ccy" aria-label="Default currency">
@@ -937,12 +948,26 @@ function renderAccountEdit() {
     colorI.addEventListener('change', () => { a.color = colorI.value; saveState(); renderRecent(); });
     nameI.addEventListener('change', () => { a.name = nameI.value.trim() || a.name; saveState(); refreshDynamicSelects(); });
     ccyI.addEventListener('change', () => { a.currency = ccyI.value; saveState(); });
+    li.querySelector('.up').addEventListener('click', () => moveAccount(i, -1));
+    li.querySelector('.down').addEventListener('click', () => moveAccount(i, 1));
     li.querySelector('.del').addEventListener('click', () => {
       if (state.accounts.length <= 1) { alert('Keep at least one account.'); return; }
       state.accounts.splice(i, 1); saveState(); renderAccountEdit(); refreshDynamicSelects();
     });
     ul.appendChild(li);
   });
+  ul.classList.toggle('show-reorder', reorderMode.acct);
+}
+
+// move an account up/down; order drives the transaction-entry dropdown
+function moveAccount(i, delta) {
+  const j = i + delta;
+  if (j < 0 || j >= state.accounts.length) return;
+  const [a] = state.accounts.splice(i, 1);
+  state.accounts.splice(j, 0, a);
+  saveState();
+  renderAccountEdit();
+  refreshDynamicSelects();
 }
 
 function refreshDynamicSelects() {
@@ -967,6 +992,17 @@ $('#recentSort').addEventListener('change', (e) => {
   state.settings.txnSort = e.target.value === 'entered' ? 'entered' : 'txn';
   saveState();
   renderRecent();
+});
+
+$('#reorderCatBtn').addEventListener('click', () => {
+  reorderMode.cat = !reorderMode.cat;
+  $('#reorderCatBtn').textContent = reorderMode.cat ? 'Done' : 'Reorder';
+  $('#categoryEditList').classList.toggle('show-reorder', reorderMode.cat);
+});
+$('#reorderAcctBtn').addEventListener('click', () => {
+  reorderMode.acct = !reorderMode.acct;
+  $('#reorderAcctBtn').textContent = reorderMode.acct ? 'Done' : 'Reorder';
+  $('#accountEditList').classList.toggle('show-reorder', reorderMode.acct);
 });
 
 $('#addAccountBtn').addEventListener('click', () => {
