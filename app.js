@@ -15,19 +15,20 @@ const DEFAULT_STATE = () => ({
     { name: 'Savings', currency: 'GBP', color: '#57c98a' },
   ],
   categories: [
-    { name: 'Groceries', monthlyBudgetGbp: 300 },
-    { name: 'Eating out', monthlyBudgetGbp: 120 },
-    { name: 'Transport', monthlyBudgetGbp: 100 },
-    { name: 'Bills', monthlyBudgetGbp: 600 },
-    { name: 'Shopping', monthlyBudgetGbp: 150 },
-    { name: 'Fun', monthlyBudgetGbp: 120 },
-    { name: 'Other', monthlyBudgetGbp: 80 },
+    { name: 'Groceries', monthlyBudgetGbp: 300, emoji: '🛒' },
+    { name: 'Eating out', monthlyBudgetGbp: 120, emoji: '🍽️' },
+    { name: 'Transport', monthlyBudgetGbp: 100, emoji: '🚌' },
+    { name: 'Bills', monthlyBudgetGbp: 600, emoji: '🧾' },
+    { name: 'Shopping', monthlyBudgetGbp: 150, emoji: '🛍️' },
+    { name: 'Fun', monthlyBudgetGbp: 120, emoji: '🎉' },
+    { name: 'Other', monthlyBudgetGbp: 80, emoji: '📦' },
   ],
   settings: {
     monthStartDay: 1,
     baseCurrency: 'GBP',
     lastFxRate: null, // { rate, fetchedAtISO }
     rollover: false,  // carry each category's leftover/overspend into the next month
+    txnSort: 'txn',   // 'txn' = by transaction date, 'entered' = by date entered
   },
 });
 
@@ -41,9 +42,9 @@ function loadState() {
     const parsed = JSON.parse(raw);
     const base = DEFAULT_STATE();
     return {
-      transactions: Array.isArray(parsed.transactions) ? parsed.transactions : base.transactions,
+      transactions: migrateTransactions(parsed.transactions) || base.transactions,
       accounts: migrateAccounts(parsed.accounts) || base.accounts,
-      categories: Array.isArray(parsed.categories) && parsed.categories.length ? parsed.categories : base.categories,
+      categories: migrateCategories(parsed.categories) || base.categories,
       settings: Object.assign(base.settings, parsed.settings || {}),
     };
   } catch (e) {
@@ -69,7 +70,38 @@ function migrateAccounts(accts) {
   });
 }
 function accountByName(name) { return state.accounts.find((a) => a.name === name); }
-function accountColor(name) { const a = accountByName(name); return a ? a.color : 'transparent'; }
+function accountColor(name) { const a = accountByName(name); return a ? a.color : '#888888'; }
+
+const DEFAULT_CAT_EMOJI = {
+  Groceries: '🛒', 'Eating out': '🍽️', Transport: '🚌', Bills: '🧾',
+  Shopping: '🛍️', Fun: '🎉', Other: '📦',
+};
+// add an emoji to legacy categories (by known name, else a generic tag)
+function migrateCategories(cats) {
+  if (!Array.isArray(cats) || !cats.length) return null;
+  return cats.map((c) => ({
+    name: c.name,
+    monthlyBudgetGbp: c.monthlyBudgetGbp || 0,
+    emoji: c.emoji || DEFAULT_CAT_EMOJI[c.name] || '🏷️',
+  }));
+}
+function categoryByName(name) { return state.categories.find((c) => c.name === name); }
+function categoryEmoji(name) { const c = categoryByName(name); return c && c.emoji ? c.emoji : '🏷️'; }
+
+// ensure every transaction has a createdAt so "date entered" sorting is stable
+// (legacy rows fall back to midday on their transaction date)
+function migrateTransactions(txns) {
+  if (!Array.isArray(txns)) return null;
+  return txns.map((t) => (t.createdAt ? t : { ...t, createdAt: `${t.dateISO}T12:00:00` }));
+}
+
+// hex (#rrggbb) -> rgba string with given alpha
+function hexToRgba(hex, alpha) {
+  const m = /^#?([0-9a-f]{6})$/i.exec(hex || '');
+  if (!m) return `rgba(136,136,136,${alpha})`;
+  const n = parseInt(m[1], 16);
+  return `rgba(${(n >> 16) & 255}, ${(n >> 8) & 255}, ${n & 255}, ${alpha})`;
+}
 
 /* ---------- helpers ---------- */
 const $ = (sel, root = document) => root.querySelector(sel);
@@ -292,6 +324,7 @@ async function onAddSubmit(ev) {
 
   const txn = {
     id: uid(),
+    createdAt: new Date().toISOString(),
     dateISO: $('#dateInput').value || todayISO(),
     amount,
     currency: selectedCcy,
@@ -326,9 +359,21 @@ function flashSave(msg, isError) {
   flashSave._t = setTimeout(() => { el.hidden = true; }, 2600);
 }
 
+const enteredKey = (t) => t.createdAt || t.id;
+// sort newest-first by the chosen key
+function sortTxns(list) {
+  if (state.settings.txnSort === 'entered') {
+    return [...list].sort((a, b) => enteredKey(b).localeCompare(enteredKey(a)));
+  }
+  return [...list].sort((a, b) =>
+    b.dateISO.localeCompare(a.dateISO) || enteredKey(b).localeCompare(enteredKey(a)));
+}
+
 function renderRecent() {
   const list = $('#recentList');
-  const recent = [...state.transactions].sort((a, b) => b.id < a.id ? -1 : 1).slice(0, 12);
+  const sortSel = $('#recentSort');
+  if (sortSel) sortSel.value = state.settings.txnSort;
+  const recent = sortTxns(state.transactions).slice(0, 12);
   $('#recentCount').textContent = state.transactions.length + ' total';
   if (!recent.length) { list.innerHTML = '<li class="empty">No charges yet — add one above.</li>'; return; }
   list.innerHTML = '';
@@ -338,13 +383,17 @@ function renderRecent() {
 function txnRow(t) {
   const li = document.createElement('li');
   li.className = 'txn clickable' + (t.gbpAmount < 0 ? ' txn-credit' : '');
+  const color = accountColor(t.account);
+  li.style.background = hexToRgba(color, 0.22);
+  li.style.borderLeft = `4px solid ${color}`;
   const orig = t.currency === 'USD'
     ? `<span class="txn-orig">$${Math.abs(t.amount).toFixed(2)} → </span>` : '';
+  const title = (t.note && t.note.trim()) ? t.note.trim() : t.category;
   li.innerHTML = `
-    <span class="acct-dot" style="background:${accountColor(t.account)}" title="${escapeHtml(t.account)}"></span>
+    <span class="txn-emoji" title="${escapeHtml(t.category)}">${categoryEmoji(t.category)}</span>
     <div class="txn-main">
-      <span class="txn-cat">${escapeHtml(t.category)}${t.pending ? ' <em class="pending-tag">pending</em>' : ''}</span>
-      <span class="txn-sub">${escapeHtml(t.account)} · ${parseISO(t.dateISO).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })}${t.note ? ' · ' + escapeHtml(t.note) : ''}</span>
+      <span class="txn-cat">${escapeHtml(title)}${t.pending ? ' <em class="pending-tag">pending</em>' : ''}</span>
+      <span class="txn-sub">${parseISO(t.dateISO).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}</span>
     </div>
     <div class="txn-amt">${orig}${gbp(t.gbpAmount)}</div>
     <span class="txn-chev" aria-hidden="true">›</span>`;
@@ -435,7 +484,7 @@ function catCard(r, frac, txns) {
   const count = txns.length;
   div.innerHTML = `
     <div class="cat-head clickable">
-      <span class="cat-name">${escapeHtml(r.name)} ${count ? `<span class="cat-count">${count}</span>` : ''}</span>
+      <span class="cat-name">${categoryEmoji(r.name)} ${escapeHtml(r.name)} ${count ? `<span class="cat-count">${count}</span>` : ''}</span>
       <span class="cat-figs">${gbp(r.spent)} ${noBudget ? '' : '/ ' + gbp(r.budget)}</span>
     </div>
     <div class="bar">
@@ -454,8 +503,7 @@ function catCard(r, frac, txns) {
     head.addEventListener('click', () => {
       if (sub.hidden) {
         sub.innerHTML = '';
-        [...txns].sort((a, b) => b.dateISO.localeCompare(a.dateISO) || (b.id < a.id ? -1 : 1))
-          .forEach((t) => sub.appendChild(txnRow(t)));
+        sortTxns(txns).forEach((t) => sub.appendChild(txnRow(t)));
       }
       sub.hidden = !sub.hidden;
       div.classList.toggle('expanded', !sub.hidden);
@@ -564,10 +612,14 @@ function renderCategoryEdit() {
     const li = document.createElement('li');
     li.className = 'edit-row';
     li.innerHTML = `
-      <input class="edit-name" type="text" value="${escapeHtml(c.name)}" maxlength="40" />
+      <input class="cat-emoji-input" type="text" value="${escapeHtml(c.emoji || '🏷️')}" aria-label="Emoji" maxlength="4" />
+      <input class="edit-name grow" type="text" value="${escapeHtml(c.name)}" maxlength="40" />
       <div class="edit-budget"><span>£</span><input type="number" min="0" step="1" value="${c.monthlyBudgetGbp}" /></div>
       <button class="btn ghost del" aria-label="Remove">✕</button>`;
-    const [nameI, budgetI] = li.querySelectorAll('input');
+    const emojiI = li.querySelector('.cat-emoji-input');
+    const nameI = li.querySelector('.edit-name');
+    const budgetI = li.querySelector('.edit-budget input');
+    emojiI.addEventListener('change', () => { c.emoji = emojiI.value.trim() || '🏷️'; saveState(); });
     nameI.addEventListener('change', () => { c.name = nameI.value.trim() || c.name; saveState(); refreshDynamicSelects(); });
     budgetI.addEventListener('change', () => { c.monthlyBudgetGbp = Math.max(0, parseFloat(budgetI.value) || 0); saveState(); updateCategoryTotal(); });
     li.querySelector('.del').addEventListener('click', () => {
@@ -622,12 +674,19 @@ function refreshDynamicSelects() {
 $('#addCategoryBtn').addEventListener('click', () => {
   const name = $('#newCategoryName').value.trim();
   const budget = Math.max(0, parseFloat($('#newCategoryBudget').value) || 0);
+  const emoji = $('#newCategoryEmoji').value.trim() || '🏷️';
   if (!name) return;
   if (state.categories.some((c) => c.name.toLowerCase() === name.toLowerCase())) { alert('Category exists.'); return; }
-  state.categories.push({ name, monthlyBudgetGbp: budget });
+  state.categories.push({ name, monthlyBudgetGbp: budget, emoji });
   saveState();
-  $('#newCategoryName').value = ''; $('#newCategoryBudget').value = '';
+  $('#newCategoryName').value = ''; $('#newCategoryBudget').value = ''; $('#newCategoryEmoji').value = '';
   renderCategoryEdit(); refreshDynamicSelects();
+});
+
+$('#recentSort').addEventListener('change', (e) => {
+  state.settings.txnSort = e.target.value === 'entered' ? 'entered' : 'txn';
+  saveState();
+  renderRecent();
 });
 
 $('#addAccountBtn').addEventListener('click', () => {

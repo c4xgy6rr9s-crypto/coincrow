@@ -145,8 +145,10 @@ input[type=color] { -webkit-appearance: auto; appearance: auto; width: 42px; hei
 
 /* ---------- recent / txn list ---------- */
 .txn-list { list-style: none; margin: 0; padding: 0; }
-.txn { display: flex; align-items: center; gap: 10px; padding: 10px 2px; border-bottom: 1px solid var(--border); }
-.txn:last-child { border-bottom: none; }
+.txn { display: flex; align-items: center; gap: 10px; padding: 10px 12px;
+  border-radius: 10px; margin-bottom: 6px; }
+.txn:last-child { margin-bottom: 0; }
+.txn-emoji { font-size: 20px; width: 26px; text-align: center; flex: none; }
 .txn-main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
 .txn-cat { font-weight: 650; }
 .txn-sub { font-size: 12.5px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -237,6 +239,8 @@ input[type=color] { -webkit-appearance: auto; appearance: auto; width: 42px; hei
 .edit-budget span { color: var(--muted); }
 .edit-row .del { padding: 8px 11px; flex-shrink: 0; }
 .account-row .acct-ccy { width: 86px; flex: none; padding: 10px 22px 10px 10px; }
+.cat-emoji-input { width: 48px; flex: none; text-align: center; padding: 10px 4px; font-size: 18px; }
+#recentCount { display: block; margin-top: 8px; text-align: right; }
 .add-inline { display: flex; gap: 8px; align-items: center; }
 .add-inline #newCategoryBudget { width: 92px; flex-shrink: 0; }
 .add-inline .btn { flex-shrink: 0; }

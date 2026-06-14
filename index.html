@@ -76,9 +76,13 @@
       <div class="card recent-card">
         <div class="card-head">
           <h3>Recent</h3>
-          <span class="muted" id="recentCount"></span>
+          <select id="recentSort" class="inline-select" aria-label="Sort by">
+            <option value="txn">By transaction date</option>
+            <option value="entered">By date entered</option>
+          </select>
         </div>
         <ul class="txn-list" id="recentList"></ul>
+        <span class="muted small" id="recentCount"></span>
       </div>
     </section>
 
@@ -133,6 +137,7 @@
         <div class="card-head"><h3>Categories &amp; budgets</h3><strong id="categoryTotal" class="cat-total"></strong></div>
         <ul class="edit-list" id="categoryEditList"></ul>
         <div class="add-inline">
+          <input id="newCategoryEmoji" class="cat-emoji-input" type="text" placeholder="🏷️" maxlength="4" aria-label="Emoji" />
           <input id="newCategoryName" type="text" placeholder="New category" maxlength="40" />
           <input id="newCategoryBudget" type="number" min="0" step="1" placeholder="£/mo" />
           <button class="btn" id="addCategoryBtn" type="button">Add</button>
