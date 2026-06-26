@@ -564,11 +564,14 @@ function catCard(r, frac, txns) {
   const noBudget = r.budget <= 0;
   const remaining = round2(r.budget - r.spent);
   const count = txns.length;
+  const cat = categoryByName(r.name);
+  const note = cat && cat.note ? cat.note.trim() : '';
   div.innerHTML = `
     <div class="cat-head clickable">
       <span class="cat-name">${categoryEmoji(r.name)} ${escapeHtml(r.name)} ${count ? `<span class="cat-count">${count}</span>` : ''}</span>
       <span class="cat-figs">${gbp(r.spent)} ${noBudget ? '' : '/ ' + gbp(r.budget)}</span>
     </div>
+    ${note ? `<div class="cat-note">📝 ${escapeHtml(note)}</div>` : ''}
     <div class="bar">
       <div class="bar-fill pace-${pace.level}" style="width:${pct}%"></div>
       ${noBudget ? '' : `<div class="bar-marker" style="left:${markerPct}%" title="Expected by now"></div>`}
@@ -933,13 +936,16 @@ function renderCategoryEdit() {
       <input class="cat-emoji-input" type="text" value="${escapeHtml(c.emoji || '🏷️')}" aria-label="Emoji" maxlength="4" />
       <input class="edit-name grow" type="text" value="${escapeHtml(c.name)}" maxlength="40" />
       <div class="edit-budget"><span>£</span><input type="number" min="0" step="1" value="${c.monthlyBudgetGbp}" /></div>
-      <button class="btn ghost del" aria-label="Remove">✕</button>`;
+      <button class="btn ghost del" aria-label="Remove">✕</button>
+      <input class="cat-note-input" type="text" maxlength="120" placeholder="Note (shows on Budget summary) — e.g. saving £500 for an air con" value="${escapeHtml(c.note || '')}" />`;
     const emojiI = li.querySelector('.cat-emoji-input');
     const nameI = li.querySelector('.edit-name');
     const budgetI = li.querySelector('.edit-budget input');
+    const noteI = li.querySelector('.cat-note-input');
     emojiI.addEventListener('change', () => { c.emoji = emojiI.value.trim() || '🏷️'; saveState(); });
     nameI.addEventListener('change', () => { c.name = nameI.value.trim() || c.name; saveState(); refreshDynamicSelects(); });
     budgetI.addEventListener('change', () => { c.monthlyBudgetGbp = Math.max(0, parseFloat(budgetI.value) || 0); saveState(); updateCategoryTotal(); });
+    noteI.addEventListener('change', () => { c.note = noteI.value.trim(); saveState(); });
     li.querySelector('.up').addEventListener('click', () => moveCategory(c, -1));
     li.querySelector('.down').addEventListener('click', () => moveCategory(c, 1));
     li.querySelector('.del').addEventListener('click', () => {
