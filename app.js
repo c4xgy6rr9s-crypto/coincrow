@@ -520,14 +520,14 @@ function renderDashboard() {
     const budget = round2(base + carry); // effective budget incl. rollover
     const expected = round2(budget * frac);
     totSpent += spent; totBudget += budget; totExpected += expected;
-    return { name: c.name, spent, budget, expected, carry };
+    return { name: c.name, spent, budget, expected, carry, base };
   });
   // categories with spend but no budget config
   Object.keys(spentByCat).forEach((name) => {
     if (!rows.some((r) => r.name === name)) {
       const spent = round2(spentByCat[name]);
       totSpent += spent;
-      rows.push({ name, spent, budget: 0, expected: 0, carry: 0 });
+      rows.push({ name, spent, budget: 0, expected: 0, carry: 0, base: 0 });
     }
   });
 
@@ -538,7 +538,7 @@ function renderDashboard() {
   $('#sumRemaining').textContent = gbp(round2(totBudget - totSpent));
 
   const banner = $('#paceBanner');
-  const pace = paceStatus(totSpent, totExpected, totBudget);
+  const pace = paceStatus(totSpent, totExpected, totBudget, rows.some((r) => r.base > 0));
   banner.className = 'pace-banner pace-' + pace.level;
   banner.textContent = pace.label + (dashOffset === 0 ? ` · ${Math.round(frac * 100)}% through period` : '');
 
@@ -548,8 +548,8 @@ function renderDashboard() {
   rows.forEach((r) => wrap.appendChild(catCard(r, frac, txnsByCat[r.name] || [])));
 }
 
-function paceStatus(spent, expected, budget) {
-  if (budget > 0 && spent > budget) return { level: 'over', label: '🚨 Over budget' };
+function paceStatus(spent, expected, budget, hasBudget) {
+  if (hasBudget && spent > budget) return { level: 'over', label: '🚨 Over budget' };
   if (spent > expected * 1.05 && expected > 0) return { level: 'over', label: '🚨 Over pace' };
   if (spent > expected * 0.9 && expected > 0) return { level: 'warn', label: '⚠️ Near pace' };
   return { level: 'ok', label: '✅ On track' };
@@ -560,8 +560,8 @@ function catCard(r, frac, txns) {
   div.className = 'card cat-card';
   const pct = r.budget > 0 ? clamp((r.spent / r.budget) * 100, 0, 100) : (r.spent > 0 ? 100 : 0);
   const markerPct = clamp(frac * 100, 0, 100);
-  const pace = paceStatus(r.spent, r.expected, r.budget);
-  const noBudget = r.budget <= 0;
+  const pace = paceStatus(r.spent, r.expected, r.budget, r.base > 0);
+  const noBudget = r.base <= 0;
   const remaining = round2(r.budget - r.spent);
   const count = txns.length;
   const cat = categoryByName(r.name);
