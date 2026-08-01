@@ -1210,10 +1210,11 @@ function renderBalCards() {
   const wrap = $('#balCards');
   wrap.innerHTML = '';
   if (!state.balanceAccounts.length) return;
-  state.balanceAccounts.forEach((a) => wrap.appendChild(balCard(a)));
+  state.balanceAccounts.forEach((a, i) => wrap.appendChild(balCard(a, i)));
+  wrap.classList.toggle('show-reorder', reorderMode.bal);
 }
 
-function balCard(a) {
+function balCard(a, idx) {
   const div = document.createElement('div');
   div.className = 'card cat-card';
   const entries = balEntriesFor(a.id);
@@ -1242,10 +1243,14 @@ function balCard(a) {
       <span class="muted small">${hasGoal
         ? (cur >= goal ? '🎯 goal reached' : `${money(round2(goal - cur), ccy)} to go`)
         : 'no goal set'}</span>
-      <span class="trip-actions">
+      <span class="trip-actions bal-actions">
         <button class="btn ghost small-btn bal-update" type="button">Update</button>
         <button class="btn ghost small-btn bal-edit" type="button">Edit</button>
         <button class="btn ghost small-btn danger bal-del" type="button">Delete</button>
+      </span>
+      <span class="trip-actions bal-move">
+        <button class="btn ghost small-btn bal-up" type="button" aria-label="Move up"${idx === 0 ? ' disabled' : ''}>▲</button>
+        <button class="btn ghost small-btn bal-down" type="button" aria-label="Move down"${idx === state.balanceAccounts.length - 1 ? ' disabled' : ''}>▼</button>
       </span>
     </div>
     <div class="bal-panel" hidden>
@@ -1322,6 +1327,8 @@ function balCard(a) {
     }
   });
   div.querySelector('.bal-edit').addEventListener('click', () => startEditBalAccount(a.id));
+  div.querySelector('.bal-up').addEventListener('click', () => moveBalAccount(idx, -1));
+  div.querySelector('.bal-down').addEventListener('click', () => moveBalAccount(idx, 1));
   div.querySelector('.bal-del').addEventListener('click', () => {
     const n = entries.length;
     if (!confirm(`Delete "${a.name}"${n ? ` and its ${n} recorded balance${n > 1 ? 's' : ''}` : ''}?`)) return;
@@ -1387,6 +1394,22 @@ function startEditBalAccount(id) {
   $('#balAcctName').scrollIntoView({ behavior: 'smooth', block: 'center' });
 }
 
+// account order drives the cards, the trend dropdown and the CSV export
+function moveBalAccount(i, delta) {
+  const j = i + delta;
+  if (j < 0 || j >= state.balanceAccounts.length) return;
+  const [a] = state.balanceAccounts.splice(i, 1);
+  state.balanceAccounts.splice(j, 0, a);
+  saveState();
+  renderBalances();
+}
+
+$('#reorderBalBtn').addEventListener('click', () => {
+  reorderMode.bal = !reorderMode.bal;
+  $('#reorderBalBtn').textContent = reorderMode.bal ? 'Done' : 'Reorder';
+  $('#balCards').classList.toggle('show-reorder', reorderMode.bal);
+});
+
 $('#balAddToggle').addEventListener('click', showBalForm);
 $('#balAcctCancel').addEventListener('click', resetBalForm);
 $('#balAcctSave').addEventListener('click', () => {
@@ -1410,7 +1433,7 @@ $('#balAcctSave').addEventListener('click', () => {
 /* ===========================================================
    SETTINGS
    =========================================================== */
-const reorderMode = { cat: false, acct: false };
+const reorderMode = { cat: false, acct: false, bal: false };
 
 function renderSettings() {
   renderCategoryEdit();

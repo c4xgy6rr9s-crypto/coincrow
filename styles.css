@@ -260,6 +260,14 @@ input[type=color] { -webkit-appearance: auto; appearance: auto; width: 42px; hei
 .yearly-note { margin: 8px 0 0; }
 
 /* balances */
+.list-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin: 2px 2px -4px; }
+.list-head h3 { margin: 0; font-size: 15px; font-weight: 700; }
+/* reorder arrows replace the row's normal actions while reorder mode is on */
+/* .trip-actions sets display:flex further down, so match its specificity here */
+.trip-actions.bal-move { display: none; }
+.show-reorder .trip-actions.bal-move { display: flex; }
+.show-reorder .trip-actions.bal-actions { display: none; }
+.bal-move .btn { padding: 4px 12px; }
 .goal-bar { margin-top: 14px; }
 .bal-panel { margin-top: 10px; border-top: 1px solid var(--border); padding-top: 10px; }
 .bal-panel[hidden] { display: none; }
