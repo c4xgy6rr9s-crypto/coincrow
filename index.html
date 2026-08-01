@@ -135,36 +135,96 @@
       </div>
     </section>
 
-    <!-- TRIPS -->
-    <section class="screen" data-screen="trips" hidden>
-      <h2 class="screen-title">Trips</h2>
-      <div class="card">
-        <div class="card-head"><h3>Add a trip</h3></div>
+    <!-- PLANS (trips + gifts) -->
+    <section class="screen" data-screen="buckets" hidden>
+      <div class="seg" id="bucketSeg" role="group" aria-label="Plan type">
+        <button type="button" class="seg-btn is-active" data-kind="trip">✈️ Trips</button>
+        <button type="button" class="seg-btn" data-kind="gift">🎁 Gifts</button>
+      </div>
+
+      <div class="card" id="bucketYearly"></div>
+
+      <button class="btn ghost add-toggle" id="bucketAddToggle" type="button">＋ Add trip</button>
+
+      <div class="card" id="tripForm" hidden>
+        <div class="card-head"><h3 id="tripFormTitle">Add a trip</h3></div>
         <label class="field"><span class="field-label">Name</span><input id="newTripName" type="text" maxlength="60" placeholder="e.g. Paris" /></label>
         <label class="field"><span class="field-label">Budget target (£)</span><input id="newTripBudget" type="number" min="0" step="1" placeholder="800" /></label>
         <div class="field-row">
           <label class="field grow"><span class="field-label">Start</span><input id="newTripStart" type="date" /></label>
           <label class="field grow"><span class="field-label">End</span><input id="newTripEnd" type="date" /></label>
         </div>
-        <button class="btn primary" id="addTripBtn" type="button">Add trip</button>
+        <div class="form-actions">
+          <button class="btn ghost" id="cancelTripBtn" type="button">Cancel</button>
+          <button class="btn primary" id="addTripBtn" type="button">Add trip</button>
+        </div>
       </div>
 
-      <div id="tripCards" class="cat-cards"></div>
-    </section>
-
-    <!-- GIFTS -->
-    <section class="screen" data-screen="gifts" hidden>
-      <h2 class="screen-title">Gifts</h2>
-      <div class="card">
-        <div class="card-head"><h3>Add a gift</h3></div>
+      <div class="card" id="giftForm" hidden>
+        <div class="card-head"><h3 id="giftFormTitle">Add a gift</h3></div>
         <label class="field"><span class="field-label">Person / event</span><input id="newGiftName" type="text" maxlength="60" placeholder="e.g. Mum's birthday" /></label>
         <label class="field"><span class="field-label">Budget target (£)</span><input id="newGiftBudget" type="number" min="0" step="1" placeholder="50" /></label>
         <label class="field"><span class="field-label">Date <span class="muted">(optional)</span></span><input id="newGiftDate" type="date" /></label>
         <label class="check toggle-row"><input id="newGiftRecurring" type="checkbox" /><span>Repeats every year</span></label>
-        <button class="btn primary" id="addGiftBtn" type="button">Add gift</button>
+        <div class="form-actions">
+          <button class="btn ghost" id="cancelGiftBtn" type="button">Cancel</button>
+          <button class="btn primary" id="addGiftBtn" type="button">Add gift</button>
+        </div>
       </div>
 
-      <div id="giftCards" class="cat-cards"></div>
+      <div id="tripCards" class="cat-cards"></div>
+      <div id="giftCards" class="cat-cards" hidden></div>
+    </section>
+
+    <!-- BALANCES -->
+    <section class="screen" data-screen="balances" hidden>
+      <h2 class="screen-title">Balances</h2>
+
+      <div class="card summary-card">
+        <div class="summary-grid">
+          <div><span class="muted">Total now</span><strong id="balTotal">£0</strong></div>
+          <div><span class="muted">Goal total</span><strong id="balGoalTotal">—</strong></div>
+          <div><span class="muted">Change (30 days)</span><strong id="balChange">—</strong></div>
+          <div><span class="muted">Last updated</span><strong id="balUpdated">—</strong></div>
+        </div>
+        <div class="bar goal-bar" id="balGoalBar" hidden><div class="bar-fill pace-ok" id="balGoalFill"></div></div>
+        <div class="muted small" id="balGoalNote" hidden></div>
+      </div>
+
+      <div class="card">
+        <div class="card-head">
+          <h3>Trend</h3>
+          <span class="head-right">
+            <select id="balAccountSel" class="inline-select" aria-label="Account"></select>
+            <select id="balRange" class="inline-select" aria-label="Range">
+              <option value="6">6 mo</option>
+              <option value="12" selected>12 mo</option>
+              <option value="24">24 mo</option>
+            </select>
+          </span>
+        </div>
+        <div id="balChart" class="chart-wrap"></div>
+      </div>
+
+      <button class="btn ghost add-toggle" id="balAddToggle" type="button">＋ Add account</button>
+
+      <div class="card" id="balAccountForm" hidden>
+        <div class="card-head"><h3 id="balFormTitle">Add account</h3></div>
+        <div class="field-row">
+          <label class="field"><span class="field-label">Colour</span><input id="balAcctColor" type="color" value="#e9c46a" /></label>
+          <label class="field grow"><span class="field-label">Name</span><input id="balAcctName" type="text" maxlength="40" placeholder="e.g. Vanguard ISA" /></label>
+        </div>
+        <label class="field">
+          <span class="field-label">Goal amount (£) <span class="muted">(optional)</span></span>
+          <input id="balAcctGoal" type="number" step="1" placeholder="10000" />
+        </label>
+        <div class="form-actions">
+          <button class="btn ghost" id="balAcctCancel" type="button">Cancel</button>
+          <button class="btn primary" id="balAcctSave" type="button">Add account</button>
+        </div>
+      </div>
+
+      <div id="balCards" class="cat-cards"></div>
     </section>
 
     <!-- SETTINGS -->
@@ -182,6 +242,7 @@
           <input id="newCategoryBudget" type="number" min="0" step="1" placeholder="£/mo" />
           <button class="btn" id="addCategoryBtn" type="button">Add</button>
         </div>
+        <span class="muted small">↻ rolls that category's unspent (or overspent) balance into the next month.</span>
       </div>
 
       <div class="card">
@@ -208,11 +269,19 @@
           </div>
           <span class="muted" id="fxRateMeta"></span>
         </label>
-        <label class="check toggle-row">
-          <input id="rolloverInput" type="checkbox" />
-          <span>Roll leftover budget into next month</span>
+      </div>
+
+      <div class="card">
+        <div class="card-head"><h3>Yearly Trips &amp; Gifts budgets</h3></div>
+        <label class="field">
+          <span class="field-label">✈️ Trips — per year (£)</span>
+          <input id="tripYearBudget" type="number" min="0" step="10" placeholder="0" />
         </label>
-        <span class="muted small">When on, each category's unspent (or overspent) balance carries forward and adjusts the next month's budget.</span>
+        <label class="field">
+          <span class="field-label">🎁 Gifts — per year (£)</span>
+          <input id="giftYearBudget" type="number" min="0" step="10" placeholder="0" />
+        </label>
+        <span class="muted small">Shown on the Plans tab as Spent / Planned / Remaining for the current year. Leave at 0 to skip.</span>
       </div>
 
       <div class="card">
@@ -220,6 +289,7 @@
         <div class="btn-grid">
           <button class="btn" id="exportTxnBtn" type="button">Export transactions (CSV)</button>
           <button class="btn" id="exportSummaryBtn" type="button">Export month summary (CSV)</button>
+          <button class="btn" id="exportBalancesBtn" type="button">Export balances (CSV)</button>
           <button class="btn" id="backupBtn" type="button">Backup all (JSON)</button>
           <button class="btn" id="restoreBtn" type="button">Restore from JSON</button>
         </div>
@@ -233,8 +303,8 @@
     <button class="tab is-active" data-go="add"><span>💸</span>Add</button>
     <button class="tab" data-go="dash"><span>📊</span>Budget</button>
     <button class="tab" data-go="trends"><span>📈</span>Trends</button>
-    <button class="tab" data-go="trips"><span>✈️</span>Trips</button>
-    <button class="tab" data-go="gifts"><span>🎁</span>Gifts</button>
+    <button class="tab" data-go="buckets"><span>🧳</span>Plans</button>
+    <button class="tab" data-go="balances"><span>🏦</span>Balances</button>
     <button class="tab" data-go="settings"><span>⚙️</span>Settings</button>
   </nav>
 

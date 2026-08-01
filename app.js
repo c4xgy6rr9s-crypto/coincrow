@@ -10,8 +10,8 @@ const DEFAULT_CAT_EMOJI = {
 };
 // per-kind config for the generic "bucket" feature (trips, gifts)
 const BUCKET_KINDS = {
-  trip: { screen: 'trips', label: 'Trip', plural: 'Trips', nameLabel: 'Name', dated: true, autoByDate: true },
-  gift: { screen: 'gifts', label: 'Gift', plural: 'Gifts', nameLabel: 'Person / event', dated: false, autoByDate: false },
+  trip: { label: 'Trip', plural: 'Trips', dated: true, autoByDate: true },
+  gift: { label: 'Gift', plural: 'Gifts', dated: false, autoByDate: false },
 };
 
 const ACCOUNT_COLORS = ['#e9c46a', '#5b8cff', '#57c98a', '#e8615f', '#c78bff', '#4ec5d6', '#f29e4c'];
@@ -19,32 +19,40 @@ const ACCOUNT_COLORS = ['#e9c46a', '#5b8cff', '#57c98a', '#e8615f', '#c78bff', '
 const DEFAULT_STATE = () => ({
   transactions: [],
   buckets: [], // { id, kind:'trip'|'gift', name, budgetGbp, startISO, endISO }
+  // balance tracking is a separate list from the spending accounts above
+  balanceAccounts: [], // { id, name, goalGbp:number|null, color }
+  balanceEntries: [],  // { id, accountId, dateISO, amountGbp } — one per account per date
   accounts: [
     { name: 'Current account', currency: 'GBP', color: '#e9c46a' },
     { name: 'Credit card', currency: 'GBP', color: '#5b8cff' },
     { name: 'Savings', currency: 'GBP', color: '#57c98a' },
   ],
+  // rollover: carry this category's leftover/overspend into the next month
   categories: [
-    { name: 'Groceries', monthlyBudgetGbp: 300, emoji: '🛒' },
-    { name: 'Eating out', monthlyBudgetGbp: 120, emoji: '🍽️' },
-    { name: 'Transport', monthlyBudgetGbp: 100, emoji: '🚌' },
-    { name: 'Bills', monthlyBudgetGbp: 600, emoji: '🧾' },
-    { name: 'Shopping', monthlyBudgetGbp: 150, emoji: '🛍️' },
-    { name: 'Fun', monthlyBudgetGbp: 120, emoji: '🎉' },
+    { name: 'Groceries', monthlyBudgetGbp: 300, emoji: '🛒', rollover: false },
+    { name: 'Eating out', monthlyBudgetGbp: 120, emoji: '🍽️', rollover: false },
+    { name: 'Transport', monthlyBudgetGbp: 100, emoji: '🚌', rollover: false },
+    { name: 'Bills', monthlyBudgetGbp: 600, emoji: '🧾', rollover: false },
+    { name: 'Shopping', monthlyBudgetGbp: 150, emoji: '🛍️', rollover: false },
+    { name: 'Fun', monthlyBudgetGbp: 120, emoji: '🎉', rollover: false },
     { name: 'Travel', monthlyBudgetGbp: 0, emoji: '✈️', bucketKind: 'trip' },
     { name: 'Gifts', monthlyBudgetGbp: 0, emoji: '🎁', bucketKind: 'gift' },
-    { name: 'Other', monthlyBudgetGbp: 80, emoji: '📦' },
+    { name: 'Other', monthlyBudgetGbp: 80, emoji: '📦', rollover: false },
   ],
   settings: {
     monthStartDay: 1,
     baseCurrency: 'GBP',
     lastFxRate: null, // { rate, fetchedAtISO }
-    rollover: false,  // carry each category's leftover/overspend into the next month
     txnSort: 'txn',   // 'txn' = by transaction date, 'entered' = by date entered
+    bucketYearBudget: { trip: 0, gift: 0 }, // yearly cap per bucket kind (0 = not set)
+    bucketView: 'trip',                     // last-viewed side of the Plans tab
   },
 });
 
 /* ---------- storage ---------- */
+// function declaration (not the `uid` const below) so migrations can use it during load
+function makeId() { return Date.now().toString(36) + Math.random().toString(36).slice(2, 7); }
+
 let state = loadState();
 
 function loadState() {
@@ -53,12 +61,19 @@ function loadState() {
     if (!raw) return DEFAULT_STATE();
     const parsed = JSON.parse(raw);
     const base = DEFAULT_STATE();
+    const settings = Object.assign(base.settings, parsed.settings || {});
+    // legacy: a single global rollover flag became a per-category one
+    const legacyRollover = !!settings.rollover;
+    delete settings.rollover;
+    settings.bucketYearBudget = Object.assign({ trip: 0, gift: 0 }, settings.bucketYearBudget || {});
     return {
       transactions: migrateTransactions(parsed.transactions) || base.transactions,
       buckets: migrateBuckets(parsed),
+      balanceAccounts: migrateBalanceAccounts(parsed.balanceAccounts),
+      balanceEntries: migrateBalanceEntries(parsed.balanceEntries),
       accounts: migrateAccounts(parsed.accounts) || base.accounts,
-      categories: migrateCategories(parsed.categories) || base.categories,
-      settings: Object.assign(base.settings, parsed.settings || {}),
+      categories: migrateCategories(parsed.categories, legacyRollover) || base.categories,
+      settings,
     };
   } catch (e) {
     console.error('[coincrow] load failed, using defaults', e);
@@ -85,15 +100,21 @@ function migrateAccounts(accts) {
 function accountByName(name) { return state.accounts.find((a) => a.name === name); }
 function accountColor(name) { const a = accountByName(name); return a ? a.color : '#888888'; }
 
-// migrate category emoji + bucketKind; ensure a Travel (trip) and Gifts (gift) category exist
-function migrateCategories(cats) {
+// migrate category emoji + bucketKind + rollover; ensure a Travel (trip) and Gifts (gift) category exist.
+// legacyRollover = the old global setting, used as the starting value for categories that predate the per-category flag.
+function migrateCategories(cats, legacyRollover) {
   if (!Array.isArray(cats) || !cats.length) return null;
-  const out = cats.map((c) => ({
-    name: c.name,
-    monthlyBudgetGbp: c.monthlyBudgetGbp || 0,
-    emoji: c.emoji || DEFAULT_CAT_EMOJI[c.name] || '🏷️',
-    bucketKind: c.bucketKind || (c.tripBased ? 'trip' : null), // legacy tripBased -> 'trip'
-  }));
+  const out = cats.map((c) => {
+    const bucketKind = c.bucketKind || (c.tripBased ? 'trip' : null); // legacy tripBased -> 'trip'
+    return {
+      name: c.name,
+      monthlyBudgetGbp: c.monthlyBudgetGbp || 0,
+      emoji: c.emoji || DEFAULT_CAT_EMOJI[c.name] || '🏷️',
+      bucketKind,
+      // bucket categories are tracked on the Plans tab, so rollover never applies to them
+      rollover: bucketKind ? false : (c.rollover != null ? !!c.rollover : !!legacyRollover),
+    };
+  });
   if (!out.some((c) => c.bucketKind === 'trip')) {
     out.push({ name: 'Travel', monthlyBudgetGbp: 0, emoji: '✈️', bucketKind: 'trip' });
   }
@@ -114,6 +135,23 @@ function migrateBuckets(parsed) {
   if (Array.isArray(parsed.trips)) return parsed.trips.map((t) => ({ ...t, kind: t.kind || 'trip' }));
   return [];
 }
+// normalise the balance-tracking lists (both added after v1, so older backups simply have none)
+function migrateBalanceAccounts(list) {
+  if (!Array.isArray(list)) return [];
+  return list.map((a, i) => ({
+    id: a.id || makeId(),
+    name: a.name || 'Account',
+    goalGbp: isFinite(a.goalGbp) && a.goalGbp !== null ? Number(a.goalGbp) : null,
+    color: a.color || ACCOUNT_COLORS[i % ACCOUNT_COLORS.length],
+  }));
+}
+function migrateBalanceEntries(list) {
+  if (!Array.isArray(list)) return [];
+  return list
+    .filter((e) => e && e.accountId && e.dateISO && isFinite(e.amountGbp))
+    .map((e) => ({ id: e.id || makeId(), accountId: e.accountId, dateISO: e.dateISO, amountGbp: Number(e.amountGbp) }));
+}
+
 function bucketsOfKind(kind) { return state.buckets.filter((b) => b.kind === kind); }
 function bucketById(id) { return state.buckets.find((b) => b.id === id); }
 function bucketName(id) { const b = bucketById(id); return b ? b.name : ''; }
@@ -149,7 +187,7 @@ function hexToRgba(hex, alpha) {
 /* ---------- helpers ---------- */
 const $ = (sel, root = document) => root.querySelector(sel);
 const $$ = (sel, root = document) => Array.from(root.querySelectorAll(sel));
-const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
+const uid = makeId;
 const gbp = (n) => new Intl.NumberFormat('en-GB', { style: 'currency', currency: 'GBP' }).format(n || 0);
 const round2 = (n) => Math.round((n + Number.EPSILON) * 100) / 100;
 const todayISO = () => toISODate(new Date());
@@ -220,8 +258,10 @@ function earliestPeriodStart() {
 // cumulative leftover (budget − spent) for a category across every completed period
 // from the first month of activity up to (not including) the displayed period.
 // Positive = saved/rolls forward; negative = overspend carried as debt.
+// Only applies to categories with their own rollover flag switched on.
 function carryInFor(catName, periodStart, baseBudget) {
-  if (!state.settings.rollover || baseBudget <= 0) return 0;
+  const cat = categoryByName(catName);
+  if (!cat || !cat.rollover || baseBudget <= 0) return 0;
   const start = earliestPeriodStart();
   if (!start) return 0;
   let carry = 0, guard = 0;
@@ -267,8 +307,8 @@ function goScreen(name) {
   $$('.tab').forEach((t) => t.classList.toggle('is-active', t.dataset.go === name));
   if (name === 'dash') { dashOffset = 0; renderDashboard(); }
   if (name === 'trends') renderTrends();
-  if (name === 'trips') renderBuckets('trip');
-  if (name === 'gifts') renderBuckets('gift');
+  if (name === 'buckets') setBucketView(bucketView);
+  if (name === 'balances') renderBalances();
   if (name === 'settings') renderSettings();
   if (name === 'add') renderRecent();
   window.scrollTo(0, 0);
@@ -354,7 +394,7 @@ function updateAddBucketField() {
   if (!kind) return;
   $('#addBucketLabel').textContent = BUCKET_KINDS[kind].label;
   const has = fillBucketSelect($('#bucketSelect'), kind);
-  $('#addBucketHint').textContent = `No ${BUCKET_KINDS[kind].plural.toLowerCase()} yet — add one on the ${BUCKET_KINDS[kind].plural} tab.`;
+  $('#addBucketHint').textContent = `No ${BUCKET_KINDS[kind].plural.toLowerCase()} yet — add one on the Plans tab.`;
   $('#addBucketHint').hidden = has;
   $('#bucketSelect').hidden = !has;
   if (has && BUCKET_KINDS[kind].autoByDate) autoSelectBucket(kind, $('#bucketSelect'));
@@ -564,14 +604,11 @@ function catCard(r, frac, txns) {
   const noBudget = r.base <= 0;
   const remaining = round2(r.budget - r.spent);
   const count = txns.length;
-  const cat = categoryByName(r.name);
-  const note = cat && cat.note ? cat.note.trim() : '';
   div.innerHTML = `
     <div class="cat-head clickable">
       <span class="cat-name">${categoryEmoji(r.name)} ${escapeHtml(r.name)} ${count ? `<span class="cat-count">${count}</span>` : ''}</span>
       <span class="cat-figs">${gbp(r.spent)} ${noBudget ? '' : '/ ' + gbp(r.budget)}</span>
     </div>
-    ${note ? `<div class="cat-note">📝 ${escapeHtml(note)}</div>` : ''}
     <div class="bar">
       <div class="bar-fill pace-${pace.level}" style="width:${pct}%"></div>
       ${noBudget ? '' : `<div class="bar-marker" style="left:${markerPct}%" title="Expected by now"></div>`}
@@ -676,13 +713,131 @@ function niceCeil(v) {
   return step * mag;
 }
 
+// line + area chart for balances over time; copes with negative values (debts)
+function lineChart(labels, values, refLine) {
+  const W = 640, H = 240, padL = 56, padB = 28, padT = 14, padR = 12;
+  const plotW = W - padL - padR, plotH = H - padT - padB;
+  const top = niceCeil(Math.max(refLine || 0, ...values, 0) || 1);
+  const lowest = Math.min(...values, 0);
+  const bottom = lowest < 0 ? -niceCeil(-lowest) : 0;
+  const span = (top - bottom) || 1;
+  const yOf = (v) => padT + plotH - ((v - bottom) / span) * plotH;
+  const xOf = (i) => padL + (values.length < 2 ? plotW / 2 : (plotW * i) / (values.length - 1));
+  const zeroY = yOf(0);
+
+  const pts = values.map((v, i) => `${xOf(i).toFixed(1)},${yOf(v).toFixed(1)}`).join(' ');
+  const area = `<polygon class="cc-area" points="${xOf(0).toFixed(1)},${zeroY.toFixed(1)} ${pts} ${xOf(values.length - 1).toFixed(1)},${zeroY.toFixed(1)}" />`;
+  const line = `<polyline class="cc-line" points="${pts}" />`;
+
+  let dots = '', xlabels = '';
+  const every = Math.ceil(values.length / 12); // thin the x labels out on long ranges
+  values.forEach((v, i) => {
+    dots += `<circle class="cc-dot" cx="${xOf(i).toFixed(1)}" cy="${yOf(v).toFixed(1)}" r="3">
+      <title>${labels[i]}: ${gbp(v)}</title></circle>`;
+    if (i % every === 0 || i === values.length - 1) {
+      xlabels += `<text class="cc-xlab" x="${xOf(i).toFixed(1)}" y="${H - 8}">${labels[i]}</text>`;
+    }
+  });
+  // last point gets its value spelled out
+  const lastI = values.length - 1;
+  const lastLab = `<text class="cc-val" x="${xOf(lastI).toFixed(1)}" y="${(yOf(values[lastI]) - 9).toFixed(1)}" text-anchor="end">${gbp(values[lastI])}</text>`;
+
+  let grid = '';
+  const lines = bottom < 0 ? [bottom, 0, top] : [0, top / 2, top];
+  lines.forEach((val) => {
+    const y = yOf(val);
+    grid += `<line class="cc-grid${val === 0 && bottom < 0 ? ' cc-zero' : ''}" x1="${padL}" y1="${y.toFixed(1)}" x2="${W - padR}" y2="${y.toFixed(1)}" />
+      <text class="cc-ylab" x="${padL - 6}" y="${(y + 3).toFixed(1)}">${Math.round(val)}</text>`;
+  });
+
+  let ref = '';
+  if (refLine) {
+    const y = yOf(refLine);
+    ref = `<line class="cc-ref" x1="${padL}" y1="${y.toFixed(1)}" x2="${W - padR}" y2="${y.toFixed(1)}" />
+      <text class="cc-reflab" x="${W - padR}" y="${(y - 4).toFixed(1)}">goal ${gbp(refLine)}</text>`;
+  }
+
+  return `<svg viewBox="0 0 ${W} ${H}" class="cc-chart" preserveAspectRatio="xMidYMid meet" role="img">
+    ${grid}${area}${line}${dots}${ref}${lastLab}${xlabels}</svg>`;
+}
+
 /* ===========================================================
    BUCKETS (trips, gifts) — generic, grouped by calendar year
    =========================================================== */
 const BUCKET_FORM = {
-  trip: { name: '#newTripName', budget: '#newTripBudget', start: '#newTripStart', end: '#newTripEnd', btn: '#addTripBtn', cards: '#tripCards', recurring: null },
-  gift: { name: '#newGiftName', budget: '#newGiftBudget', start: '#newGiftDate', end: null, btn: '#addGiftBtn', cards: '#giftCards', recurring: '#newGiftRecurring' },
+  trip: { name: '#newTripName', budget: '#newTripBudget', start: '#newTripStart', end: '#newTripEnd', btn: '#addTripBtn',
+    cards: '#tripCards', recurring: null, form: '#tripForm', title: '#tripFormTitle', cancel: '#cancelTripBtn' },
+  gift: { name: '#newGiftName', budget: '#newGiftBudget', start: '#newGiftDate', end: null, btn: '#addGiftBtn',
+    cards: '#giftCards', recurring: '#newGiftRecurring', form: '#giftForm', title: '#giftFormTitle', cancel: '#cancelGiftBtn' },
 };
+const OTHER_KIND = { trip: 'gift', gift: 'trip' };
+let bucketView = state.settings.bucketView === 'gift' ? 'gift' : 'trip';
+
+// switch the Plans tab between Trips and Gifts
+function setBucketView(kind) {
+  bucketView = kind;
+  state.settings.bucketView = kind;
+  saveState();
+  $$('#bucketSeg .seg-btn').forEach((b) => b.classList.toggle('is-active', b.dataset.kind === kind));
+  resetBucketForm(OTHER_KIND[kind]); // collapse both add forms when switching sides
+  resetBucketForm(kind);
+  $(BUCKET_FORM[kind].cards).hidden = false;
+  $(BUCKET_FORM[OTHER_KIND[kind]].cards).hidden = true;
+  $('#bucketAddToggle').textContent = `＋ Add ${BUCKET_KINDS[kind].label.toLowerCase()}`;
+  renderBuckets(kind);
+}
+function showBucketForm(kind) {
+  $(BUCKET_FORM[kind].form).hidden = false;
+  $('#bucketAddToggle').hidden = true;
+}
+$$('#bucketSeg .seg-btn').forEach((b) => b.addEventListener('click', () => setBucketView(b.dataset.kind)));
+$('#bucketAddToggle').addEventListener('click', () => showBucketForm(bucketView));
+$('#cancelTripBtn').addEventListener('click', () => { resetBucketForm('trip'); });
+$('#cancelGiftBtn').addEventListener('click', () => { resetBucketForm('gift'); });
+
+/* --- yearly cap across all trips / all gifts --- */
+// every transaction in the kind's category for a calendar year, whether or not it's assigned to a bucket
+function kindSpentInYear(kind, year) {
+  const cat = categoryForKind(kind);
+  return round2(state.transactions
+    .filter((t) => t.category === cat && yearOfISO(t.dateISO) === year)
+    .reduce((s, t) => s + t.gbpAmount, 0));
+}
+function kindPlannedInYear(kind, year) {
+  return round2(bucketEntries(kind).filter((e) => e.year === year).reduce((s, e) => s + e.budget, 0));
+}
+
+function renderBucketYearly(kind) {
+  const cfg = BUCKET_KINDS[kind];
+  const year = String(new Date().getFullYear());
+  const cap = state.settings.bucketYearBudget[kind] || 0;
+  const spent = kindSpentInYear(kind, year);
+  const planned = kindPlannedInYear(kind, year);
+  const remaining = round2(cap - spent);
+  const pct = cap > 0 ? clamp((spent / cap) * 100, 0, 100) : (spent > 0 ? 100 : 0);
+  const plannedPct = cap > 0 ? clamp((planned / cap) * 100, 0, 100) : 0;
+  const level = cap > 0 ? (spent > cap ? 'over' : spent > cap * 0.9 ? 'warn' : 'ok') : 'ok';
+  const unplanned = round2(cap - planned);
+  $('#bucketYearly').innerHTML = `
+    <div class="card-head">
+      <h3>${year} ${cfg.plural.toLowerCase()}</h3>
+      <span class="cat-figs">${cap ? `yearly budget ${gbp(cap)}` : 'no yearly budget set'}</span>
+    </div>
+    <div class="summary-grid grid-3">
+      <div><span class="muted">Spent</span><strong>${gbp(spent)}</strong></div>
+      <div><span class="muted">Planned</span><strong>${gbp(planned)}</strong></div>
+      <div><span class="muted">Remaining</span><strong class="${cap && remaining < 0 ? 'neg' : ''}">${cap ? gbp(remaining) : '—'}</strong></div>
+    </div>
+    ${cap ? `
+      <div class="bar yearly-bar">
+        <div class="bar-fill pace-${level}" style="width:${pct}%"></div>
+        <div class="bar-marker" style="left:${plannedPct}%" title="Planned"></div>
+      </div>
+      <div class="muted small yearly-note">${unplanned >= 0
+        ? `${gbp(unplanned)} of the yearly budget not planned yet`
+        : `⚠️ ${gbp(-unplanned)} more planned than budgeted`}</div>`
+    : `<p class="muted small yearly-note">Set a yearly ${cfg.plural.toLowerCase()} budget in Settings to track this.</p>`}`;
+}
 const yearOfISO = (iso) => (iso || '').slice(0, 4);
 function bucketSpentInYear(id, year) {
   return round2(state.transactions
@@ -745,8 +900,9 @@ function renderBuckets(kind) {
   const cfg = BUCKET_KINDS[kind];
   const wrap = $(BUCKET_FORM[kind].cards);
   wrap.innerHTML = '';
+  renderBucketYearly(kind);
   if (!bucketsOfKind(kind).length) {
-    wrap.innerHTML = `<div class="card"><p class="muted" style="margin:0">No ${cfg.plural.toLowerCase()} yet. Add one below, then pick it when you log a ${categoryForKind(kind)} transaction.</p></div>`;
+    wrap.innerHTML = `<div class="card"><p class="muted empty-note">No ${cfg.plural.toLowerCase()} yet. Tap ＋ to add one, then pick it when you log a ${categoryForKind(kind)} transaction.</p></div>`;
     return;
   }
   const entries = bucketEntries(kind);
@@ -766,10 +922,15 @@ function renderBuckets(kind) {
     yrs.forEach((yr) => {
       const items = groups[yr].sort((a, b) => (a.b.startISO || '').localeCompare(b.b.startISO || '') || a.b.name.localeCompare(b.b.name));
       const budgetSum = round2(items.reduce((s, e) => s + e.budget, 0));
-      const spentSum = round2(items.reduce((s, e) => s + e.spent, 0));
+      // real years count every transaction in the category, so unassigned spend still shows against the yearly cap
+      const spentSum = yr === 'Undated'
+        ? round2(items.reduce((s, e) => s + e.spent, 0))
+        : kindSpentInYear(kind, yr);
+      const cap = yr === 'Undated' ? 0 : (state.settings.bucketYearBudget[kind] || 0);
+      const capNote = cap ? ` · ${gbp(round2(cap - spentSum))} left of ${gbp(cap)}` : '';
       const hdr = document.createElement('div');
       hdr.className = 'year-head';
-      hdr.innerHTML = `<span>${yr}</span><span class="muted small">${gbp(budgetSum)} budgeted · ${gbp(spentSum)} spent</span>`;
+      hdr.innerHTML = `<span>${yr}</span><span class="muted small">${gbp(budgetSum)} planned · ${gbp(spentSum)} spent${capNote}</span>`;
       wrap.appendChild(hdr);
       items.forEach((e) => wrap.appendChild(bucketCard(e, kind)));
     });
@@ -871,6 +1032,8 @@ function startEditBucket(kind, id) {
   if (f.end) $(f.end).value = b.endISO || '';
   if (f.recurring) $(f.recurring).checked = !!b.recurring;
   $(f.btn).textContent = 'Save changes';
+  $(f.title).textContent = `Edit ${BUCKET_KINDS[kind].label.toLowerCase()}`;
+  showBucketForm(kind);
   $(f.name).scrollIntoView({ behavior: 'smooth', block: 'center' });
 }
 function resetBucketForm(kind) {
@@ -880,6 +1043,9 @@ function resetBucketForm(kind) {
   if (f.end) $(f.end).value = '';
   if (f.recurring) $(f.recurring).checked = false;
   $(f.btn).textContent = `Add ${BUCKET_KINDS[kind].label.toLowerCase()}`;
+  $(f.title).textContent = `Add a ${BUCKET_KINDS[kind].label.toLowerCase()}`;
+  $(f.form).hidden = true;
+  $('#bucketAddToggle').hidden = false;
 }
 function saveBucket(kind) {
   const f = BUCKET_FORM[kind];
@@ -904,6 +1070,264 @@ $('#addTripBtn').addEventListener('click', () => saveBucket('trip'));
 $('#addGiftBtn').addEventListener('click', () => saveBucket('gift'));
 
 /* ===========================================================
+   BALANCES — own account list, optional goals, history + trend
+   =========================================================== */
+function balAccountById(id) { return state.balanceAccounts.find((a) => a.id === id); }
+// entries for one account, oldest first
+function balEntriesFor(id) {
+  return state.balanceEntries.filter((e) => e.accountId === id).sort((a, b) => a.dateISO.localeCompare(b.dateISO));
+}
+function balLatest(id) { const l = balEntriesFor(id); return l.length ? l[l.length - 1] : null; }
+// last balance recorded on or before a date (null if the account had no entry yet)
+function balAsOf(id, iso) {
+  let val = null;
+  balEntriesFor(id).forEach((e) => { if (e.dateISO <= iso) val = e.amountGbp; });
+  return val;
+}
+function balTotalAsOf(iso) {
+  return round2(state.balanceAccounts.reduce((s, a) => s + (balAsOf(a.id, iso) || 0), 0));
+}
+const fmtDate = (iso) => parseISO(iso).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
+const signedGbp = (n) => (n >= 0 ? '+' : '') + gbp(n);
+// last n calendar months as { label, iso }; iso = month end, or today for the current month
+function monthPoints(n) {
+  const now = new Date();
+  const out = [];
+  for (let i = n - 1; i >= 0; i--) {
+    const d = new Date(now.getFullYear(), now.getMonth() - i + 1, 0); // day 0 of next month = last day of this one
+    out.push({
+      label: d.toLocaleDateString('en-GB', { month: 'short', year: '2-digit' }),
+      iso: i === 0 ? todayISO() : toISODate(d),
+    });
+  }
+  return out;
+}
+
+let balSel = 'all';         // trend selector: 'all' or an account id
+let balEditingId = null;    // account being edited in the top form
+
+function renderBalances() {
+  renderBalSummary();
+  renderBalChart();
+  renderBalCards();
+}
+
+function renderBalSummary() {
+  const today = todayISO();
+  const total = balTotalAsOf(today);
+  const withGoal = state.balanceAccounts.filter((a) => a.goalGbp != null);
+  const goalTotal = round2(withGoal.reduce((s, a) => s + a.goalGbp, 0));
+  const goalHave = round2(withGoal.reduce((s, a) => s + (balAsOf(a.id, today) || 0), 0));
+  const ago = toISODate(new Date(Date.now() - 30 * DAY_MS));
+  const dates = state.balanceEntries.map((e) => e.dateISO).sort();
+  const last = dates.length ? dates[dates.length - 1] : null;
+
+  $('#balTotal').textContent = gbp(total);
+  $('#balGoalTotal').textContent = withGoal.length ? gbp(goalTotal) : '—';
+  $('#balChange').textContent = dates.length ? signedGbp(round2(total - balTotalAsOf(ago))) : '—';
+  $('#balUpdated').textContent = last ? fmtDate(last) : '—';
+
+  const showGoal = withGoal.length > 0 && goalTotal > 0;
+  $('#balGoalBar').hidden = !showGoal;
+  $('#balGoalNote').hidden = !showGoal;
+  if (showGoal) {
+    const pct = clamp((goalHave / goalTotal) * 100, 0, 100);
+    $('#balGoalFill').style.width = pct + '%';
+    $('#balGoalNote').textContent =
+      `${gbp(goalHave)} of ${gbp(goalTotal)} across ${withGoal.length} account${withGoal.length > 1 ? 's' : ''} with goals · ${Math.round(pct)}%`;
+  }
+}
+
+function renderBalChart() {
+  const sel = $('#balAccountSel');
+  const items = ['All accounts', ...state.balanceAccounts.map((a) => a.name)];
+  const current = balSel === 'all' ? 'All accounts' : ((balAccountById(balSel) || {}).name || 'All accounts');
+  fillSelect(sel, items, current);
+
+  const wrap = $('#balChart');
+  if (!state.balanceAccounts.length) {
+    wrap.innerHTML = '<p class="muted empty-note">Add an account below to start tracking balances.</p>';
+    return;
+  }
+  const n = parseInt($('#balRange').value, 10) || 12;
+  const pts = monthPoints(n);
+  let values, ref = null;
+  if (balSel === 'all') {
+    values = pts.map((p) => balTotalAsOf(p.iso));
+  } else {
+    values = pts.map((p) => balAsOf(balSel, p.iso) || 0);
+    const a = balAccountById(balSel);
+    ref = a && a.goalGbp != null ? a.goalGbp : null;
+  }
+  wrap.innerHTML = lineChart(pts.map((p) => p.label), values, ref);
+}
+
+$('#balRange').addEventListener('change', renderBalChart);
+$('#balAccountSel').addEventListener('change', (e) => {
+  const a = state.balanceAccounts.find((x) => x.name === e.target.value);
+  balSel = a ? a.id : 'all';
+  renderBalChart();
+});
+
+function renderBalCards() {
+  const wrap = $('#balCards');
+  wrap.innerHTML = '';
+  if (!state.balanceAccounts.length) return;
+  state.balanceAccounts.forEach((a) => wrap.appendChild(balCard(a)));
+}
+
+function balCard(a) {
+  const div = document.createElement('div');
+  div.className = 'card cat-card';
+  const entries = balEntriesFor(a.id);
+  const latest = entries.length ? entries[entries.length - 1] : null;
+  const cur = latest ? latest.amountGbp : 0;
+  const prev = entries.length > 1 ? entries[entries.length - 2] : null;
+  const delta = prev ? round2(cur - prev.amountGbp) : null;
+  const goal = a.goalGbp;
+  const hasGoal = goal != null && goal !== 0;
+  const pct = hasGoal ? clamp((cur / goal) * 100, 0, 100) : 0;
+  const level = hasGoal && cur >= goal ? 'ok' : 'warn';
+
+  div.innerHTML = `
+    <div class="cat-head clickable">
+      <span class="cat-name"><span class="acct-dot" style="background:${escapeHtml(a.color)}"></span>
+        ${escapeHtml(a.name)} ${entries.length ? `<span class="cat-count">${entries.length}</span>` : ''}</span>
+      <span class="cat-figs">${gbp(cur)}${hasGoal ? ' / ' + gbp(goal) : ''}</span>
+    </div>
+    <div class="trip-dates muted small">${latest ? `updated ${fmtDate(latest.dateISO)}` : 'no balance recorded yet'}${
+      delta != null ? ` · ${signedGbp(delta)} since last` : ''}</div>
+    ${hasGoal ? `<div class="bar"><div class="bar-fill pace-${level}" style="width:${pct}%"></div></div>` : ''}
+    <div class="cat-foot">
+      <span class="muted small">${hasGoal
+        ? (cur >= goal ? '🎯 goal reached' : `${gbp(round2(goal - cur))} to go`)
+        : 'no goal set'}</span>
+      <span class="trip-actions">
+        <button class="btn ghost small-btn bal-update" type="button">Update</button>
+        <button class="btn ghost small-btn bal-edit" type="button">Edit</button>
+        <button class="btn ghost small-btn danger bal-del" type="button">Delete</button>
+      </span>
+    </div>
+    <div class="bal-panel" hidden>
+      <div class="bal-entry-form">
+        <input class="bal-amt" type="number" step="0.01" inputmode="decimal" placeholder="Balance £" />
+        <input class="bal-date" type="date" />
+        <button class="btn primary small-btn bal-save" type="button">Save</button>
+      </div>
+      <ul class="txn-list bal-history"></ul>
+    </div>`;
+
+  const panel = div.querySelector('.bal-panel');
+  const amtI = div.querySelector('.bal-amt');
+  const dateI = div.querySelector('.bal-date');
+  dateI.value = todayISO();
+
+  const fillHistory = () => {
+    const ul = div.querySelector('.bal-history');
+    ul.innerHTML = '';
+    if (!entries.length) { ul.innerHTML = '<li class="empty">No balances recorded yet.</li>'; return; }
+    [...entries].reverse().forEach((e, i, arr) => {
+      const before = arr[i + 1];
+      const d = before ? round2(e.amountGbp - before.amountGbp) : null;
+      const li = document.createElement('li');
+      li.className = 'txn bal-row';
+      li.innerHTML = `
+        <div class="txn-main">
+          <span class="txn-cat">${gbp(e.amountGbp)}</span>
+          <span class="txn-sub">${fmtDate(e.dateISO)}${d != null ? ` · ${signedGbp(d)}` : ''}</span>
+        </div>
+        <button class="txn-del" type="button" aria-label="Delete entry">✕</button>`;
+      li.querySelector('.txn-del').addEventListener('click', () => {
+        if (!confirm(`Delete the ${gbp(e.amountGbp)} entry from ${fmtDate(e.dateISO)}?`)) return;
+        state.balanceEntries = state.balanceEntries.filter((x) => x.id !== e.id);
+        saveState();
+        renderBalances();
+      });
+      ul.appendChild(li);
+    });
+  };
+  const togglePanel = (open) => {
+    const show = open == null ? panel.hidden : open;
+    if (show) fillHistory();
+    panel.hidden = !show;
+    div.classList.toggle('expanded', show);
+  };
+
+  div.querySelector('.cat-head').addEventListener('click', () => togglePanel());
+  div.querySelector('.bal-update').addEventListener('click', () => { togglePanel(true); amtI.focus(); });
+  div.querySelector('.bal-save').addEventListener('click', () => {
+    const v = parseFloat(amtI.value);
+    if (!isFinite(v)) { alert('Enter the current balance.'); return; }
+    saveBalanceEntry(a.id, dateI.value || todayISO(), round2(v));
+  });
+  div.querySelector('.bal-edit').addEventListener('click', () => startEditBalAccount(a.id));
+  div.querySelector('.bal-del').addEventListener('click', () => {
+    const n = entries.length;
+    if (!confirm(`Delete "${a.name}"${n ? ` and its ${n} recorded balance${n > 1 ? 's' : ''}` : ''}?`)) return;
+    state.balanceAccounts = state.balanceAccounts.filter((x) => x.id !== a.id);
+    state.balanceEntries = state.balanceEntries.filter((e) => e.accountId !== a.id);
+    if (balSel === a.id) balSel = 'all';
+    if (balEditingId === a.id) resetBalForm();
+    saveState();
+    renderBalances();
+  });
+  return div;
+}
+
+// one entry per account per date — re-entering a date overwrites it
+function saveBalanceEntry(accountId, dateISO, amountGbp) {
+  const existing = state.balanceEntries.find((e) => e.accountId === accountId && e.dateISO === dateISO);
+  if (existing) existing.amountGbp = amountGbp;
+  else state.balanceEntries.push({ id: uid(), accountId, dateISO, amountGbp });
+  saveState();
+  renderBalances();
+}
+
+/* --- add / edit a balance account --- */
+function showBalForm() { $('#balAccountForm').hidden = false; $('#balAddToggle').hidden = true; }
+function resetBalForm() {
+  balEditingId = null;
+  $('#balAcctName').value = '';
+  $('#balAcctGoal').value = '';
+  $('#balAcctColor').value = ACCOUNT_COLORS[state.balanceAccounts.length % ACCOUNT_COLORS.length];
+  $('#balFormTitle').textContent = 'Add account';
+  $('#balAcctSave').textContent = 'Add account';
+  $('#balAccountForm').hidden = true;
+  $('#balAddToggle').hidden = false;
+}
+function startEditBalAccount(id) {
+  const a = balAccountById(id);
+  if (!a) return;
+  balEditingId = id;
+  $('#balAcctName').value = a.name;
+  $('#balAcctGoal').value = a.goalGbp != null ? a.goalGbp : '';
+  $('#balAcctColor').value = a.color;
+  $('#balFormTitle').textContent = 'Edit account';
+  $('#balAcctSave').textContent = 'Save changes';
+  showBalForm();
+  $('#balAcctName').scrollIntoView({ behavior: 'smooth', block: 'center' });
+}
+
+$('#balAddToggle').addEventListener('click', showBalForm);
+$('#balAcctCancel').addEventListener('click', resetBalForm);
+$('#balAcctSave').addEventListener('click', () => {
+  const name = $('#balAcctName').value.trim();
+  if (!name) { alert('Give the account a name.'); return; }
+  const rawGoal = $('#balAcctGoal').value.trim();
+  const goalGbp = rawGoal === '' ? null : round2(parseFloat(rawGoal) || 0);
+  const color = $('#balAcctColor').value;
+  if (balEditingId) {
+    Object.assign(balAccountById(balEditingId), { name, goalGbp, color });
+  } else {
+    if (state.balanceAccounts.some((a) => a.name.toLowerCase() === name.toLowerCase())) { alert('Account exists.'); return; }
+    state.balanceAccounts.push({ id: uid(), name, goalGbp, color });
+  }
+  saveState();
+  resetBalForm();
+  renderBalances();
+});
+
+/* ===========================================================
    SETTINGS
    =========================================================== */
 const reorderMode = { cat: false, acct: false };
@@ -912,7 +1336,8 @@ function renderSettings() {
   renderCategoryEdit();
   renderAccountEdit();
   $('#monthStartDay').value = state.settings.monthStartDay;
-  $('#rolloverInput').checked = !!state.settings.rollover;
+  $('#tripYearBudget').value = state.settings.bucketYearBudget.trip || '';
+  $('#giftYearBudget').value = state.settings.bucketYearBudget.gift || '';
   const r = state.settings.lastFxRate;
   $('#fxRateInput').value = r ? r.rate : '';
   $('#fxRateMeta').textContent = r
@@ -936,16 +1361,18 @@ function renderCategoryEdit() {
       <input class="cat-emoji-input" type="text" value="${escapeHtml(c.emoji || '🏷️')}" aria-label="Emoji" maxlength="4" />
       <input class="edit-name grow" type="text" value="${escapeHtml(c.name)}" maxlength="40" />
       <div class="edit-budget"><span>£</span><input type="number" min="0" step="1" value="${c.monthlyBudgetGbp}" /></div>
-      <button class="btn ghost del" aria-label="Remove">✕</button>
-      <input class="cat-note-input" type="text" maxlength="120" placeholder="Note (shows on Budget summary) — e.g. saving £500 for an air con" value="${escapeHtml(c.note || '')}" />`;
+      <label class="cat-roll" title="Roll this category's leftover (or overspend) into next month">
+        <input class="cat-roll-input" type="checkbox"${c.rollover ? ' checked' : ''} /><span>↻</span>
+      </label>
+      <button class="btn ghost del" aria-label="Remove">✕</button>`;
     const emojiI = li.querySelector('.cat-emoji-input');
     const nameI = li.querySelector('.edit-name');
     const budgetI = li.querySelector('.edit-budget input');
-    const noteI = li.querySelector('.cat-note-input');
+    const rollI = li.querySelector('.cat-roll-input');
     emojiI.addEventListener('change', () => { c.emoji = emojiI.value.trim() || '🏷️'; saveState(); });
     nameI.addEventListener('change', () => { c.name = nameI.value.trim() || c.name; saveState(); refreshDynamicSelects(); });
     budgetI.addEventListener('change', () => { c.monthlyBudgetGbp = Math.max(0, parseFloat(budgetI.value) || 0); saveState(); updateCategoryTotal(); });
-    noteI.addEventListener('change', () => { c.note = noteI.value.trim(); saveState(); });
+    rollI.addEventListener('change', () => { c.rollover = rollI.checked; saveState(); });
     li.querySelector('.up').addEventListener('click', () => moveCategory(c, -1));
     li.querySelector('.down').addEventListener('click', () => moveCategory(c, 1));
     li.querySelector('.del').addEventListener('click', () => {
@@ -1035,7 +1462,7 @@ $('#addCategoryBtn').addEventListener('click', () => {
   const emoji = $('#newCategoryEmoji').value.trim() || '🏷️';
   if (!name) return;
   if (state.categories.some((c) => c.name.toLowerCase() === name.toLowerCase())) { alert('Category exists.'); return; }
-  state.categories.push({ name, monthlyBudgetGbp: budget, emoji });
+  state.categories.push({ name, monthlyBudgetGbp: budget, emoji, rollover: false });
   saveState();
   $('#newCategoryName').value = ''; $('#newCategoryBudget').value = ''; $('#newCategoryEmoji').value = '';
   renderCategoryEdit(); refreshDynamicSelects();
@@ -1074,9 +1501,13 @@ $('#monthStartDay').addEventListener('change', (e) => {
   saveState();
 });
 
-$('#rolloverInput').addEventListener('change', (e) => {
-  state.settings.rollover = e.target.checked;
-  saveState();
+// yearly caps for all trips / all gifts (0 = not tracked)
+[['#tripYearBudget', 'trip'], ['#giftYearBudget', 'gift']].forEach(([sel, kind]) => {
+  $(sel).addEventListener('change', (e) => {
+    state.settings.bucketYearBudget[kind] = Math.max(0, parseFloat(e.target.value) || 0);
+    e.target.value = state.settings.bucketYearBudget[kind] || '';
+    saveState();
+  });
 });
 
 $('#fxRateInput').addEventListener('change', (e) => {
@@ -1137,6 +1568,19 @@ $('#exportSummaryBtn').addEventListener('click', () => {
   download(`coincrow-summary-${period.key}.csv`, csv, 'text/csv;charset=utf-8');
 });
 
+$('#exportBalancesBtn').addEventListener('click', () => {
+  const head = ['Account', 'Date', 'Balance (GBP)', 'Goal (GBP)'];
+  const rows = [...state.balanceEntries]
+    .sort((a, b) => a.dateISO.localeCompare(b.dateISO))
+    .map((e) => {
+      const a = balAccountById(e.accountId);
+      return [a ? a.name : '(deleted)', e.dateISO, e.amountGbp.toFixed(2),
+        a && a.goalGbp != null ? a.goalGbp.toFixed(2) : ''].map(csvCell).join(',');
+    });
+  const csv = [head.join(','), ...rows].join('\r\n');
+  download(`coincrow-balances-${todayISO()}.csv`, csv, 'text/csv;charset=utf-8');
+});
+
 $('#backupBtn').addEventListener('click', () => {
   download(`coincrow-backup-${todayISO()}.json`, JSON.stringify(state, null, 2), 'application/json');
 });
@@ -1153,8 +1597,10 @@ $('#restoreFile').addEventListener('change', (e) => {
       if (!confirm(`Restore ${data.transactions.length} transactions? This replaces all current data.`)) return;
       localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
       state = loadState();
+      balSel = 'all';
+      bucketView = state.settings.bucketView === 'gift' ? 'gift' : 'trip';
       refreshDynamicSelects();
-      renderSettings(); renderRecent();
+      renderSettings(); renderRecent(); renderBalances();
       alert('Restored.');
     } catch (err) {
       alert('Could not restore: ' + err.message);
@@ -1273,8 +1719,8 @@ function rerenderAll() {
   renderRecent();
   if (!$('[data-screen=dash]').hidden) renderDashboard();
   if (!$('[data-screen=trends]').hidden) renderTrends();
-  if (!$('[data-screen=trips]').hidden) renderBuckets('trip');
-  if (!$('[data-screen=gifts]').hidden) renderBuckets('gift');
+  if (!$('[data-screen=buckets]').hidden) renderBuckets(bucketView);
+  if (!$('[data-screen=balances]').hidden) renderBalances();
 }
 
 /* ===========================================================
@@ -1282,6 +1728,7 @@ function rerenderAll() {
    =========================================================== */
 initAddForm();
 renderRecent();
+resetBalForm();
 goScreen('add');
 
 if ('serviceWorker' in navigator) {

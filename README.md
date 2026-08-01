@@ -18,9 +18,16 @@ browser (this device), so **back up regularly** from Settings.
   expected-by-now marker; green / amber / red pacing. Month switcher for past periods.
 - **Trends** — total and per-category spend across the last 6–12 periods, drawn as
   inline SVG (no external libraries → works offline), with a budget reference line.
-- **Settings** — edit categories + budgets, accounts, the day the budget month starts
-  on, and the USD→GBP rate. Export transactions / month summary as CSV. Backup &
-  restore everything as JSON.
+- **Plans** — trips and gifts, each with its own budget target and its own spend,
+  grouped by year and kept out of the monthly dashboard. A yearly cap across *all*
+  trips (and all gifts) shows Spent / Planned / Remaining for the current year.
+- **Balances** — a separate list of accounts (ISA, pension, mortgage…) with an
+  optional goal each. Record a balance whenever you like; the tab charts total and
+  per-account balances month by month, negatives included.
+- **Settings** — edit categories + budgets (each with its own optional **rollover**
+  of leftover/overspend into next month), accounts, the day the budget month starts
+  on, the USD→GBP rate, and the yearly Trips/Gifts budgets. Export transactions /
+  month summary / balances as CSV. Backup & restore everything as JSON.
 
 ## Run locally
 
@@ -51,7 +58,7 @@ python -m http.server 8080
 
 | File | Purpose |
 |------|---------|
-| `index.html` | Markup + the four tabs (Add / Budget / Trends / Settings) |
+| `index.html` | Markup + the six tabs (Add / Budget / Trends / Plans / Balances / Settings) |
 | `app.js` | State, storage, FX, pacing math, charts, CSV/JSON export |
 | `styles.css` | Crow theme (glossy black + coin gold), mobile-first |
 | `manifest.json` | PWA metadata (installable, standalone) |
