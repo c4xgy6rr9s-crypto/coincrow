@@ -20,8 +20,8 @@ const DEFAULT_STATE = () => ({
   transactions: [],
   buckets: [], // { id, kind:'trip'|'gift', name, budgetGbp, startISO, endISO }
   // balance tracking is a separate list from the spending accounts above
-  balanceAccounts: [], // { id, name, goalGbp:number|null, color }
-  balanceEntries: [],  // { id, accountId, dateISO, amountGbp } — one per account per date
+  balanceAccounts: [], // { id, name, currency, goal:number|null (account currency), color }
+  balanceEntries: [],  // { id, accountId, dateISO, amount, currency, fxRate, amountGbp } — one per account per date
   accounts: [
     { name: 'Current account', currency: 'GBP', color: '#e9c46a' },
     { name: 'Credit card', currency: 'GBP', color: '#5b8cff' },
@@ -135,21 +135,35 @@ function migrateBuckets(parsed) {
   if (Array.isArray(parsed.trips)) return parsed.trips.map((t) => ({ ...t, kind: t.kind || 'trip' }));
   return [];
 }
-// normalise the balance-tracking lists (both added after v1, so older backups simply have none)
+// normalise the balance-tracking lists (both added after v1, so older backups simply have none).
+// `goal` is in the account's own currency; legacy `goalGbp` predates USD accounts, so it is GBP.
 function migrateBalanceAccounts(list) {
   if (!Array.isArray(list)) return [];
-  return list.map((a, i) => ({
-    id: a.id || makeId(),
-    name: a.name || 'Account',
-    goalGbp: isFinite(a.goalGbp) && a.goalGbp !== null ? Number(a.goalGbp) : null,
-    color: a.color || ACCOUNT_COLORS[i % ACCOUNT_COLORS.length],
-  }));
+  return list.map((a, i) => {
+    const legacyGoal = a.goal != null ? a.goal : a.goalGbp;
+    return {
+      id: a.id || makeId(),
+      name: a.name || 'Account',
+      currency: a.currency === 'USD' ? 'USD' : 'GBP',
+      goal: legacyGoal != null && isFinite(legacyGoal) ? Number(legacyGoal) : null,
+      color: a.color || ACCOUNT_COLORS[i % ACCOUNT_COLORS.length],
+    };
+  });
 }
+// entries store the native amount + the rate used, so past points never move when the rate does
 function migrateBalanceEntries(list) {
   if (!Array.isArray(list)) return [];
   return list
     .filter((e) => e && e.accountId && e.dateISO && isFinite(e.amountGbp))
-    .map((e) => ({ id: e.id || makeId(), accountId: e.accountId, dateISO: e.dateISO, amountGbp: Number(e.amountGbp) }));
+    .map((e) => ({
+      id: e.id || makeId(),
+      accountId: e.accountId,
+      dateISO: e.dateISO,
+      amount: isFinite(e.amount) ? Number(e.amount) : Number(e.amountGbp),
+      currency: e.currency === 'USD' ? 'USD' : 'GBP',
+      fxRate: e.fxRate != null ? Number(e.fxRate) : null,
+      amountGbp: Number(e.amountGbp),
+    }));
 }
 
 function bucketsOfKind(kind) { return state.buckets.filter((b) => b.kind === kind); }
@@ -189,6 +203,9 @@ const $ = (sel, root = document) => root.querySelector(sel);
 const $$ = (sel, root = document) => Array.from(root.querySelectorAll(sel));
 const uid = makeId;
 const gbp = (n) => new Intl.NumberFormat('en-GB', { style: 'currency', currency: 'GBP' }).format(n || 0);
+// en-US so it renders "$1,000.00" rather than en-GB's "US$1,000.00"
+const usd = (n) => new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(n || 0);
+const money = (n, ccy) => (ccy === 'USD' ? usd(n) : gbp(n));
 const round2 = (n) => Math.round((n + Number.EPSILON) * 100) / 100;
 const todayISO = () => toISODate(new Date());
 
@@ -714,7 +731,8 @@ function niceCeil(v) {
 }
 
 // line + area chart for balances over time; copes with negative values (debts)
-function lineChart(labels, values, refLine) {
+function lineChart(labels, values, refLine, ccy) {
+  const fmt = (n) => money(n, ccy || 'GBP');
   const W = 640, H = 240, padL = 56, padB = 28, padT = 14, padR = 12;
   const plotW = W - padL - padR, plotH = H - padT - padB;
   const top = niceCeil(Math.max(refLine || 0, ...values, 0) || 1);
@@ -733,14 +751,14 @@ function lineChart(labels, values, refLine) {
   const every = Math.ceil(values.length / 12); // thin the x labels out on long ranges
   values.forEach((v, i) => {
     dots += `<circle class="cc-dot" cx="${xOf(i).toFixed(1)}" cy="${yOf(v).toFixed(1)}" r="3">
-      <title>${labels[i]}: ${gbp(v)}</title></circle>`;
+      <title>${labels[i]}: ${fmt(v)}</title></circle>`;
     if (i % every === 0 || i === values.length - 1) {
       xlabels += `<text class="cc-xlab" x="${xOf(i).toFixed(1)}" y="${H - 8}">${labels[i]}</text>`;
     }
   });
   // last point gets its value spelled out
   const lastI = values.length - 1;
-  const lastLab = `<text class="cc-val" x="${xOf(lastI).toFixed(1)}" y="${(yOf(values[lastI]) - 9).toFixed(1)}" text-anchor="end">${gbp(values[lastI])}</text>`;
+  const lastLab = `<text class="cc-val" x="${xOf(lastI).toFixed(1)}" y="${(yOf(values[lastI]) - 9).toFixed(1)}" text-anchor="end">${fmt(values[lastI])}</text>`;
 
   let grid = '';
   const lines = bottom < 0 ? [bottom, 0, top] : [0, top / 2, top];
@@ -754,7 +772,7 @@ function lineChart(labels, values, refLine) {
   if (refLine) {
     const y = yOf(refLine);
     ref = `<line class="cc-ref" x1="${padL}" y1="${y.toFixed(1)}" x2="${W - padR}" y2="${y.toFixed(1)}" />
-      <text class="cc-reflab" x="${W - padR}" y="${(y - 4).toFixed(1)}">goal ${gbp(refLine)}</text>`;
+      <text class="cc-reflab" x="${W - padR}" y="${(y - 4).toFixed(1)}">goal ${fmt(refLine)}</text>`;
   }
 
   return `<svg viewBox="0 0 ${W} ${H}" class="cc-chart" preserveAspectRatio="xMidYMid meet" role="img">
@@ -1077,18 +1095,35 @@ function balAccountById(id) { return state.balanceAccounts.find((a) => a.id === 
 function balEntriesFor(id) {
   return state.balanceEntries.filter((e) => e.accountId === id).sort((a, b) => a.dateISO.localeCompare(b.dateISO));
 }
-function balLatest(id) { const l = balEntriesFor(id); return l.length ? l[l.length - 1] : null; }
-// last balance recorded on or before a date (null if the account had no entry yet)
-function balAsOf(id, iso) {
-  let val = null;
-  balEntriesFor(id).forEach((e) => { if (e.dateISO <= iso) val = e.amountGbp; });
-  return val;
+// last entry recorded on or before a date (null if the account had none yet)
+function balEntryAsOf(id, iso) {
+  let found = null;
+  balEntriesFor(id).forEach((e) => { if (e.dateISO <= iso) found = e; });
+  return found;
 }
+function balAsOf(id, iso) { const e = balEntryAsOf(id, iso); return e ? e.amountGbp : null; }
+// an entry expressed in a given currency: native if it matches, else via the stored/current rate
+function entryIn(e, ccy) {
+  if (!e) return null;
+  if (ccy !== 'USD') return e.amountGbp;
+  if (e.currency === 'USD') return e.amount;
+  const r = state.settings.lastFxRate;
+  return r && r.rate ? round2(e.amountGbp / r.rate) : e.amountGbp;
+}
+function balAsOfIn(id, iso, ccy) { return entryIn(balEntryAsOf(id, iso), ccy); }
 function balTotalAsOf(iso) {
   return round2(state.balanceAccounts.reduce((s, a) => s + (balAsOf(a.id, iso) || 0), 0));
 }
+// a goal is held in the account's currency; convert with the latest rate for the GBP roll-up
+function goalInGbp(a) {
+  if (a.goal == null) return null;
+  if (a.currency !== 'USD') return a.goal;
+  const r = state.settings.lastFxRate;
+  return r && r.rate ? round2(a.goal * r.rate) : null;
+}
 const fmtDate = (iso) => parseISO(iso).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
-const signedGbp = (n) => (n >= 0 ? '+' : '') + gbp(n);
+const signedMoney = (n, ccy) => (n >= 0 ? '+' : '') + money(n, ccy);
+const signedGbp = (n) => signedMoney(n, 'GBP');
 // last n calendar months as { label, iso }; iso = month end, or today for the current month
 function monthPoints(n) {
   const now = new Date();
@@ -1115,8 +1150,8 @@ function renderBalances() {
 function renderBalSummary() {
   const today = todayISO();
   const total = balTotalAsOf(today);
-  const withGoal = state.balanceAccounts.filter((a) => a.goalGbp != null);
-  const goalTotal = round2(withGoal.reduce((s, a) => s + a.goalGbp, 0));
+  const withGoal = state.balanceAccounts.filter((a) => goalInGbp(a) != null);
+  const goalTotal = round2(withGoal.reduce((s, a) => s + goalInGbp(a), 0));
   const goalHave = round2(withGoal.reduce((s, a) => s + (balAsOf(a.id, today) || 0), 0));
   const ago = toISODate(new Date(Date.now() - 30 * DAY_MS));
   const dates = state.balanceEntries.map((e) => e.dateISO).sort();
@@ -1151,15 +1186,17 @@ function renderBalChart() {
   }
   const n = parseInt($('#balRange').value, 10) || 12;
   const pts = monthPoints(n);
-  let values, ref = null;
+  // a single account is charted in its own currency; the roll-up is always GBP
+  let values, ref = null, ccy = 'GBP';
   if (balSel === 'all') {
     values = pts.map((p) => balTotalAsOf(p.iso));
   } else {
-    values = pts.map((p) => balAsOf(balSel, p.iso) || 0);
     const a = balAccountById(balSel);
-    ref = a && a.goalGbp != null ? a.goalGbp : null;
+    ccy = a ? a.currency : 'GBP';
+    values = pts.map((p) => balAsOfIn(balSel, p.iso, ccy) || 0);
+    ref = a && a.goal != null ? a.goal : null;
   }
-  wrap.innerHTML = lineChart(pts.map((p) => p.label), values, ref);
+  wrap.innerHTML = lineChart(pts.map((p) => p.label), values, ref, ccy);
 }
 
 $('#balRange').addEventListener('change', renderBalChart);
@@ -1181,26 +1218,29 @@ function balCard(a) {
   div.className = 'card cat-card';
   const entries = balEntriesFor(a.id);
   const latest = entries.length ? entries[entries.length - 1] : null;
-  const cur = latest ? latest.amountGbp : 0;
+  const ccy = a.currency;                      // figures on the card are in the account's currency
+  const cur = latest ? entryIn(latest, ccy) : 0;
   const prev = entries.length > 1 ? entries[entries.length - 2] : null;
-  const delta = prev ? round2(cur - prev.amountGbp) : null;
-  const goal = a.goalGbp;
+  const delta = prev ? round2(cur - entryIn(prev, ccy)) : null;
+  const goal = a.goal;
   const hasGoal = goal != null && goal !== 0;
   const pct = hasGoal ? clamp((cur / goal) * 100, 0, 100) : 0;
   const level = hasGoal && cur >= goal ? 'ok' : 'warn';
+  const gbpNote = ccy === 'USD' && latest ? ` · ≈ ${gbp(latest.amountGbp)}` : '';
 
   div.innerHTML = `
     <div class="cat-head clickable">
       <span class="cat-name"><span class="acct-dot" style="background:${escapeHtml(a.color)}"></span>
-        ${escapeHtml(a.name)} ${entries.length ? `<span class="cat-count">${entries.length}</span>` : ''}</span>
-      <span class="cat-figs">${gbp(cur)}${hasGoal ? ' / ' + gbp(goal) : ''}</span>
+        ${escapeHtml(a.name)} ${ccy === 'USD' ? '<span class="ccy-tag">USD</span>' : ''}
+        ${entries.length ? `<span class="cat-count">${entries.length}</span>` : ''}</span>
+      <span class="cat-figs">${money(cur, ccy)}${hasGoal ? ' / ' + money(goal, ccy) : ''}</span>
     </div>
     <div class="trip-dates muted small">${latest ? `updated ${fmtDate(latest.dateISO)}` : 'no balance recorded yet'}${
-      delta != null ? ` · ${signedGbp(delta)} since last` : ''}</div>
+      delta != null ? ` · ${signedMoney(delta, ccy)} since last` : ''}${gbpNote}</div>
     ${hasGoal ? `<div class="bar"><div class="bar-fill pace-${level}" style="width:${pct}%"></div></div>` : ''}
     <div class="cat-foot">
       <span class="muted small">${hasGoal
-        ? (cur >= goal ? '🎯 goal reached' : `${gbp(round2(goal - cur))} to go`)
+        ? (cur >= goal ? '🎯 goal reached' : `${money(round2(goal - cur), ccy)} to go`)
         : 'no goal set'}</span>
       <span class="trip-actions">
         <button class="btn ghost small-btn bal-update" type="button">Update</button>
@@ -1210,10 +1250,15 @@ function balCard(a) {
     </div>
     <div class="bal-panel" hidden>
       <div class="bal-entry-form">
-        <input class="bal-amt" type="number" step="0.01" inputmode="decimal" placeholder="Balance £" />
+        <div class="ccy-toggle bal-ccy" role="group" aria-label="Currency">
+          <button type="button" class="ccy-btn${ccy === 'GBP' ? ' is-active' : ''}" data-ccy="GBP">£</button>
+          <button type="button" class="ccy-btn${ccy === 'USD' ? ' is-active' : ''}" data-ccy="USD">$</button>
+        </div>
+        <input class="bal-amt" type="number" step="0.01" inputmode="decimal" placeholder="Balance" />
         <input class="bal-date" type="date" />
         <button class="btn primary small-btn bal-save" type="button">Save</button>
       </div>
+      <p class="muted small bal-fx-note" hidden></p>
       <ul class="txn-list bal-history"></ul>
     </div>`;
 
@@ -1221,6 +1266,11 @@ function balCard(a) {
   const amtI = div.querySelector('.bal-amt');
   const dateI = div.querySelector('.bal-date');
   dateI.value = todayISO();
+  let entryCcy = ccy;
+  div.querySelectorAll('.bal-ccy .ccy-btn').forEach((b) => b.addEventListener('click', () => {
+    entryCcy = b.dataset.ccy;
+    div.querySelectorAll('.bal-ccy .ccy-btn').forEach((x) => x.classList.toggle('is-active', x === b));
+  }));
 
   const fillHistory = () => {
     const ul = div.querySelector('.bal-history');
@@ -1228,17 +1278,18 @@ function balCard(a) {
     if (!entries.length) { ul.innerHTML = '<li class="empty">No balances recorded yet.</li>'; return; }
     [...entries].reverse().forEach((e, i, arr) => {
       const before = arr[i + 1];
-      const d = before ? round2(e.amountGbp - before.amountGbp) : null;
+      const d = before ? round2(e.amount - entryIn(before, e.currency)) : null;
       const li = document.createElement('li');
       li.className = 'txn bal-row';
       li.innerHTML = `
         <div class="txn-main">
-          <span class="txn-cat">${gbp(e.amountGbp)}</span>
-          <span class="txn-sub">${fmtDate(e.dateISO)}${d != null ? ` · ${signedGbp(d)}` : ''}</span>
+          <span class="txn-cat">${money(e.amount, e.currency)}${
+            e.currency === 'USD' ? ` <span class="txn-orig">≈ ${gbp(e.amountGbp)}</span>` : ''}</span>
+          <span class="txn-sub">${fmtDate(e.dateISO)}${d != null ? ` · ${signedMoney(d, e.currency)}` : ''}</span>
         </div>
         <button class="txn-del" type="button" aria-label="Delete entry">✕</button>`;
       li.querySelector('.txn-del').addEventListener('click', () => {
-        if (!confirm(`Delete the ${gbp(e.amountGbp)} entry from ${fmtDate(e.dateISO)}?`)) return;
+        if (!confirm(`Delete the ${money(e.amount, e.currency)} entry from ${fmtDate(e.dateISO)}?`)) return;
         state.balanceEntries = state.balanceEntries.filter((x) => x.id !== e.id);
         saveState();
         renderBalances();
@@ -1255,10 +1306,20 @@ function balCard(a) {
 
   div.querySelector('.cat-head').addEventListener('click', () => togglePanel());
   div.querySelector('.bal-update').addEventListener('click', () => { togglePanel(true); amtI.focus(); });
-  div.querySelector('.bal-save').addEventListener('click', () => {
+  div.querySelector('.bal-save').addEventListener('click', async () => {
     const v = parseFloat(amtI.value);
     if (!isFinite(v)) { alert('Enter the current balance.'); return; }
-    saveBalanceEntry(a.id, dateI.value || todayISO(), round2(v));
+    const btn = div.querySelector('.bal-save');
+    btn.disabled = true;
+    try {
+      await saveBalanceEntry(a.id, dateI.value || todayISO(), round2(v), entryCcy);
+    } catch (err) {
+      btn.disabled = false;
+      const note = div.querySelector('.bal-fx-note');
+      note.hidden = false;
+      note.textContent = 'No USD→GBP rate available — set one in Settings first.';
+      note.classList.add('is-error');
+    }
   });
   div.querySelector('.bal-edit').addEventListener('click', () => startEditBalAccount(a.id));
   div.querySelector('.bal-del').addEventListener('click', () => {
@@ -1274,22 +1335,39 @@ function balCard(a) {
   return div;
 }
 
-// one entry per account per date — re-entering a date overwrites it
-function saveBalanceEntry(accountId, dateISO, amountGbp) {
+// one entry per account per date — re-entering a date overwrites it.
+// USD amounts lock the rate used, so historic points don't move when the rate does.
+async function saveBalanceEntry(accountId, dateISO, amount, currency) {
+  let fxRate = null, amountGbp = amount;
+  if (currency === 'USD') {
+    const r = await getUsdRate(); // throws if there is no live or cached rate
+    fxRate = r.rate;
+    amountGbp = round2(amount * r.rate);
+  }
+  const entry = { accountId, dateISO, amount, currency: currency === 'USD' ? 'USD' : 'GBP', fxRate, amountGbp };
   const existing = state.balanceEntries.find((e) => e.accountId === accountId && e.dateISO === dateISO);
-  if (existing) existing.amountGbp = amountGbp;
-  else state.balanceEntries.push({ id: uid(), accountId, dateISO, amountGbp });
+  if (existing) Object.assign(existing, entry);
+  else state.balanceEntries.push({ id: uid(), ...entry });
   saveState();
   renderBalances();
 }
 
 /* --- add / edit a balance account --- */
+let balFormCcy = 'GBP';
+function setBalFormCcy(ccy) {
+  balFormCcy = ccy === 'USD' ? 'USD' : 'GBP';
+  $$('#balAcctCcy .ccy-btn').forEach((b) => b.classList.toggle('is-active', b.dataset.ccy === balFormCcy));
+  $('#balGoalCcy').textContent = balFormCcy === 'USD' ? '$' : '£';
+}
+$$('#balAcctCcy .ccy-btn').forEach((b) => b.addEventListener('click', () => setBalFormCcy(b.dataset.ccy)));
+
 function showBalForm() { $('#balAccountForm').hidden = false; $('#balAddToggle').hidden = true; }
 function resetBalForm() {
   balEditingId = null;
   $('#balAcctName').value = '';
   $('#balAcctGoal').value = '';
   $('#balAcctColor').value = ACCOUNT_COLORS[state.balanceAccounts.length % ACCOUNT_COLORS.length];
+  setBalFormCcy('GBP');
   $('#balFormTitle').textContent = 'Add account';
   $('#balAcctSave').textContent = 'Add account';
   $('#balAccountForm').hidden = true;
@@ -1300,8 +1378,9 @@ function startEditBalAccount(id) {
   if (!a) return;
   balEditingId = id;
   $('#balAcctName').value = a.name;
-  $('#balAcctGoal').value = a.goalGbp != null ? a.goalGbp : '';
+  $('#balAcctGoal').value = a.goal != null ? a.goal : '';
   $('#balAcctColor').value = a.color;
+  setBalFormCcy(a.currency);
   $('#balFormTitle').textContent = 'Edit account';
   $('#balAcctSave').textContent = 'Save changes';
   showBalForm();
@@ -1314,13 +1393,14 @@ $('#balAcctSave').addEventListener('click', () => {
   const name = $('#balAcctName').value.trim();
   if (!name) { alert('Give the account a name.'); return; }
   const rawGoal = $('#balAcctGoal').value.trim();
-  const goalGbp = rawGoal === '' ? null : round2(parseFloat(rawGoal) || 0);
+  const goal = rawGoal === '' ? null : round2(parseFloat(rawGoal) || 0);
   const color = $('#balAcctColor').value;
+  const currency = balFormCcy;
   if (balEditingId) {
-    Object.assign(balAccountById(balEditingId), { name, goalGbp, color });
+    Object.assign(balAccountById(balEditingId), { name, goal, color, currency });
   } else {
     if (state.balanceAccounts.some((a) => a.name.toLowerCase() === name.toLowerCase())) { alert('Account exists.'); return; }
-    state.balanceAccounts.push({ id: uid(), name, goalGbp, color });
+    state.balanceAccounts.push({ id: uid(), name, goal, color, currency });
   }
   saveState();
   resetBalForm();
@@ -1569,13 +1649,14 @@ $('#exportSummaryBtn').addEventListener('click', () => {
 });
 
 $('#exportBalancesBtn').addEventListener('click', () => {
-  const head = ['Account', 'Date', 'Balance (GBP)', 'Goal (GBP)'];
+  const head = ['Account', 'Date', 'Currency', 'Balance', 'GBP balance', 'FX rate', 'Goal', 'Goal currency'];
   const rows = [...state.balanceEntries]
     .sort((a, b) => a.dateISO.localeCompare(b.dateISO))
     .map((e) => {
       const a = balAccountById(e.accountId);
-      return [a ? a.name : '(deleted)', e.dateISO, e.amountGbp.toFixed(2),
-        a && a.goalGbp != null ? a.goalGbp.toFixed(2) : ''].map(csvCell).join(',');
+      return [a ? a.name : '(deleted)', e.dateISO, e.currency, e.amount.toFixed(2), e.amountGbp.toFixed(2),
+        e.fxRate != null ? e.fxRate : '', a && a.goal != null ? a.goal.toFixed(2) : '', a ? a.currency : '']
+        .map(csvCell).join(',');
     });
   const csv = [head.join(','), ...rows].join('\r\n');
   download(`coincrow-balances-${todayISO()}.csv`, csv, 'text/csv;charset=utf-8');

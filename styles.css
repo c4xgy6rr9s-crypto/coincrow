@@ -264,14 +264,21 @@ input[type=color] { -webkit-appearance: auto; appearance: auto; width: 42px; hei
 .bal-panel { margin-top: 10px; border-top: 1px solid var(--border); padding-top: 10px; }
 .bal-panel[hidden] { display: none; }
 .bal-entry-form { display: flex; gap: 8px; align-items: center; margin-bottom: 8px; }
-.bal-entry-form .bal-amt { flex: 1; }
+.bal-entry-form .bal-amt { flex: 1; min-width: 90px; }
+.bal-entry-form .ccy-toggle { flex: none; }
+.bal-entry-form .ccy-btn { padding: 0 10px; }
+.bal-fx-note { margin: 0 0 8px; }
+.bal-fx-note.is-error { color: var(--over); }
+.ccy-tag { font-size: 10px; font-weight: 700; letter-spacing: 0.4px; color: var(--muted);
+  background: var(--card-2); border-radius: 99px; padding: 1px 7px; margin-left: 2px; vertical-align: middle; }
 .bal-entry-form .bal-date { width: 150px; flex: none; }
 .bal-entry-form .btn { flex: none; padding: 10px 14px; }
 .bal-history .txn { padding: 8px 2px; }
 .bal-row .txn-cat { font-variant-numeric: tabular-nums; }
 @media (max-width: 420px) {
+  /* narrow: £/$ + amount on one row, date + Save on the next */
   .bal-entry-form { flex-wrap: wrap; }
-  .bal-entry-form .bal-date { width: 100%; }
+  .bal-entry-form .bal-date { width: auto; flex: 1; }
 }
 
 /* ---------- settings edit lists ---------- */

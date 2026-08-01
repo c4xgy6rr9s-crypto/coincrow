@@ -214,8 +214,15 @@
           <label class="field"><span class="field-label">Colour</span><input id="balAcctColor" type="color" value="#e9c46a" /></label>
           <label class="field grow"><span class="field-label">Name</span><input id="balAcctName" type="text" maxlength="40" placeholder="e.g. Vanguard ISA" /></label>
         </div>
+        <div class="field">
+          <span class="field-label">Currency</span>
+          <div class="ccy-toggle" id="balAcctCcy" role="group" aria-label="Account currency">
+            <button type="button" class="ccy-btn is-active" data-ccy="GBP">£ GBP</button>
+            <button type="button" class="ccy-btn" data-ccy="USD">$ USD</button>
+          </div>
+        </div>
         <label class="field">
-          <span class="field-label">Goal amount (£) <span class="muted">(optional)</span></span>
+          <span class="field-label">Goal amount (<span id="balGoalCcy">£</span>) <span class="muted">(optional)</span></span>
           <input id="balAcctGoal" type="number" step="1" placeholder="10000" />
         </label>
         <div class="form-actions">

@@ -21,9 +21,10 @@ browser (this device), so **back up regularly** from Settings.
 - **Plans** — trips and gifts, each with its own budget target and its own spend,
   grouped by year and kept out of the monthly dashboard. A yearly cap across *all*
   trips (and all gifts) shows Spent / Planned / Remaining for the current year.
-- **Balances** — a separate list of accounts (ISA, pension, mortgage…) with an
-  optional goal each. Record a balance whenever you like; the tab charts total and
-  per-account balances month by month, negatives included.
+- **Balances** — a separate list of accounts (ISA, pension, mortgage…), each in GBP
+  or USD with an optional goal. Record a balance whenever you like; USD entries lock
+  the rate of the day, so past points never move. The tab charts total (GBP) and
+  per-account (native) balances month by month, negatives included.
 - **Settings** — edit categories + budgets (each with its own optional **rollover**
   of leftover/overspend into next month), accounts, the day the budget month starts
   on, the USD→GBP rate, and the yearly Trips/Gifts budgets. Export transactions /
